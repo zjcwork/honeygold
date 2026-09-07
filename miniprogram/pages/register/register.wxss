@@ -1,0 +1,13 @@
+.registration-page{padding:12rpx 50rpx calc(28rpx + env(safe-area-inset-bottom));color:#111}
+.registration-page>.title{font-size:42rpx;font-weight:600;margin:12rpx 0 36rpx}
+.registration-event{display:flex;align-items:stretch;gap:28rpx;padding-bottom:28rpx;border-bottom:1rpx solid #e6e6e6}
+.registration-event .cover{width:270rpx;min-height:330rpx}
+.registration-event .event-title{font-size:28rpx;margin:8rpx 0}
+.registration-event .event-desc{font-size:22rpx;-webkit-line-clamp:3;margin-bottom:12rpx}
+.registration-event .meta{font-size:21rpx;line-height:1.5}
+.registration-selection{font-size:22rpx;color:#8f9987;margin:20rpx 0}
+.registration-page .field{color:#111;font-size:28rpx;margin:28rpx 0}
+.registration-page .field input,.registration-page .picker{border-color:#e2e2e2;border-radius:0;color:#999;height:88rpx;font-size:26rpx}
+.registration-page .consent{font-size:23rpx;color:#a0a0a0}
+.registration-page .booking-submit{margin-top:30rpx}
+.registration-error{padding:24rpx;background:#fff3e3;color:#956b39;line-height:1.8}

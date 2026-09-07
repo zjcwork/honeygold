@@ -1,0 +1,67 @@
+# 蜜金 · 活动预约小程序与后台
+
+根据《蜜金预约小程序(1)的副本.pdf》18 页原型实现。文档作为产品参考；灰色图片占位未被当作品牌素材，当前使用深绿 / 香槟金排版式活动封面。活动日期按预约弹层的 2026-10-15 至 10-18 设置，原稿其他页面只显示 10 月 18 日，正式运营请确认。活动地点保留“待确认”。
+
+## 交付内容
+
+- `miniprogram/`：原生微信小程序，可直接导入微信开发者工具。
+- `admin/`：React 运营后台、浏览器版预约预览、API 服务、数据库迁移和接口测试。
+- 后台首页 `/`；用户交互预览 `/mini`；条款演示 `/mini/terms`。
+
+## 已实现
+
+活动列表与详情、状态筛选、会员登录、体验 / 日期 / 时段选择、报名、满额候补、我的活动、提前 8 小时改签和取消、自动候补递补、入场二维码、保存入场凭证图片。
+
+后台支持活动创建 / 编辑 / 发布 / 下架 / 结束、场次创建和名额调整、预约查询与 CSV 导出、会员记录、入场码核销。扫码枪可直接输入完整入场码。后台核销具有单次使用保护。
+
+数据持久化到 SQLite（本地）或 Cloudflare D1（部署），不使用浏览器缓存保存业务记录。用户身份与管理身份隔离，用户仅能查询或更改自己的预约。服务端校验容量与预约唯一性；会话令牌以 SHA-256 摘要保存并设置过期时间。关闭演示模式后，演示会话失效。
+
+## 本地启动
+
+要求 Node.js 22.13+（推荐 Node 24）。
+
+```sh
+cd admin
+npm install
+cp .env.example .env
+# 本地演示请将 .env 的 DEMO_MODE 设为 true
+npm run dev -- --host 0.0.0.0
+```
+
+打开终端打印的本地地址。当前电脑 macOS 13.1 不支持 workerd，所以开发服务自动使用 Node SQLite 适配器；线上仍构建为标准 Cloudflare Worker。SQLite 数据位于 `admin/.local/honeygold.sqlite`，不提交到 Git。开发时自动应用 `drizzle/*.sql` 迁移，禁止手工修改已应用迁移。
+
+演示模式首次访问初始化一场活动与 84 个场次；不会制造报名数据。Beauty Bar 每日 10 位、Gold Bar 每日 20 位；自由参观名额暂按每时段 20 位设置，可在后台调整。演示模式放开核销时间用于体验，正式模式限制为场次开始前 15 分钟至开始后 30 分钟（暂定，品牌可调整）。
+
+## 导入微信开发者工具
+
+1. 选择 `miniprogram/` 目录导入。`touristappid` 可用于本地演示；正式调试需替换成品牌 AppID。
+2. 启动后台开发服务，`miniprogram/config.js` 默认连接 `http://localhost:3000/api`。
+3. 本地演示已关闭合法域名校验；正式版本须在 `project.config.json` 将 `urlCheck` 设置为 true，并将 `baseUrl` 替换为已登记的 HTTPS API 域名。
+4. 真机联调需可访问的 HTTPS 服务，手机上的 localhost 不指向电脑。
+5. 当前 Sites 链接仅供账号本人在浏览器查看，带私有访问保护，不能直接作为微信小程序的正式 API 地址。
+
+## 正式接入仍需品牌配置
+
+- 设置 `DEMO_MODE=false`；设置高强度随机 `ADMIN_KEY`（建议至少 32 字节）；仅在服务器配置 `WECHAT_APP_ID` 和 `WECHAT_APP_SECRET`。
+- 已实现服务端 `code2Session` 登录和 `getPhoneNumber` 手机授权交换；AppSecret 不会发送到小程序。正式模式报名必须使用微信验证过的手机号。
+- 手机号授权弹窗由微信原生 `getPhoneNumber` 组件提供，“使用其他号码”及短信验证由微信原生流程处理，没有伪造本地验证码。
+- 当前提供 `wx.requestSubscribeMessage` 授权入口。模板 ID 未配置时明确提示。服务端已包含订阅通知队列、递补后发送与明确失败重试。需配置 `WECHAT_SUBSCRIBE_FIELDS` 为模板字段到 `title/name/date/datetime/time/experience/status` 的映射 JSON；字段名必须以品牌审核通过的微信模板为准。网络结果不确定的发送不会自动重试，避免重复通知。正式投递未连接品牌账号验证；未授权或未配置时，候补结果可在“我的活动”查询。
+- 请提供正式活动地点、品牌图片、助手微信二维码、隐私联系人、数据保留规则和完整活动 / 会员条款。目前的条款页面明确标注为演示草案，不是可直接用于正式收集个人信息的最终政策。
+- 后台目前为单一管理员角色。微信发布审核、备案、隐私声明配置和真机验证需要品牌账号，本次未提交微信审核。
+
+微信官方接口参考：
+- https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/user-login/code2Session.html
+- https://developers.weixin.qq.com/miniprogram/dev/OpenApiDoc/user-info/phone-number/getPhoneNumber.html
+
+## 验证
+
+```sh
+cd admin
+npx tsc --noEmit
+npm run build
+node tests/api-flow.mjs # 另一个终端运行开发服务，且 DEMO_MODE=true
+```
+
+接口测试覆盖未登录 / 越权访问、非法输入、并发容量、重复预约、二维码、候补递补、改签、增加与缩减名额、重复核销、已核销不可取消、下架活动不可预约。测试会创建标有“自动测试”的活动和测试会员，仅应在演示环境运行。
+
+已完成源码语法与类型检查、生产构建、实际 API 流程测试。没有运行微信开发者工具或真机自动化；网页未做浏览器交互测试。WebMCP 导航接口已实现特性检测，无可用的 WebMCP 验证上下文，未声称已验证。

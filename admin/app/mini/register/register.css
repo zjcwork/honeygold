@@ -1,0 +1,136 @@
+.registration-phone {
+  min-height: 820px;
+}
+.registration-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 0;
+}
+.registration-top > span {
+  font-size: 14px;
+  border: 1px solid #eee;
+  border-radius: 20px;
+  padding: 3px 10px;
+}
+.registration-back {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: #737373;
+  background-clip: content-box;
+  color: #fff;
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -11px;
+}
+.registration-back svg {
+  flex-shrink: 0;
+}
+.registration-body {
+  padding: 6px 25px 24px;
+  color: #111;
+}
+.registration-body h1 {
+  font-size: 23px;
+  font-weight: 600;
+  margin: 8px 0 24px;
+}
+.registration-event {
+  display: flex;
+  gap: 15px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #e8e8e8;
+}
+.registration-event .mini-cover {
+  width: 43%;
+  min-height: 174px;
+}
+.registration-event > div:last-child {
+  flex: 1;
+  min-width: 0;
+}
+.registration-event small {
+  font-size: 9px;
+}
+.registration-event h2 {
+  font-size: 14px;
+  margin: 5px 0;
+  line-height: 1.6;
+}
+.registration-event p {
+  font-size: 11px;
+  color: #999;
+  line-height: 1.6;
+  margin: 5px 0 10px;
+}
+.registration-event label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  line-height: 1.6;
+  color: #777;
+  margin: 5px 0;
+}
+.registration-event .status {
+  border-radius: 20px;
+  background: #164f3e;
+  color: #fff;
+  font-size: 10px;
+  padding: 2px 10px;
+}
+.registration-selection {
+  font-size: 11px;
+  color: #929b89;
+  margin: 14px 0;
+}
+.registration-body .form-grid {
+  gap: 19px;
+}
+.registration-body .field {
+  color: #111;
+  font-size: 14px;
+}
+.registration-body .field input,
+.registration-body .field select {
+  height: 44px;
+  border: 1px solid #e2e2e2;
+  border-radius: 0;
+  background: white;
+  font-size: 13px;
+}
+.registration-body .field input::placeholder {
+  color: #c3c3c3;
+}
+.registration-body .field .gender-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  padding-right: 44px;
+  color: #999;
+}
+.registration-body .consent {
+  font-size: 12px;
+  color: #a0a0a0;
+}
+.registration-body .booking-submit {
+  height: 56px !important;
+  width: 100%;
+  border: 0;
+  border-radius: 999px !important;
+  background: #f0e7d7 !important;
+  color: #111 !important;
+  font-size: 19px !important;
+  font-weight: 400 !important;
+  margin-top: 8px;
+  box-shadow: none;
+}
+@media (max-width: 700px) {
+  .registration-phone {
+    min-height: 100vh;
+  }
+}

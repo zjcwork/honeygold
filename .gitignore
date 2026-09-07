@@ -1,0 +1,19 @@
+tmp/
+.DS_Store
+*.zip
+
+# Local runtime data and credentials
+**/node_modules/
+**/.env*
+!**/.env.example
+**/.local/
+**/.wrangler/
+**/.vinext/
+**/dist/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.pem
+*.key
+*.tsbuildinfo
+**/project.private.config.json

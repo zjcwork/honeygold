@@ -1,0 +1,1 @@
+{"desc":"活动信息可被索引，预约信息需登录访问","rules":[{"action":"allow","page":"pages/index/index"}]}
