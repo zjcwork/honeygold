@@ -1,0 +1,1 @@
+ALTER TABLE events ADD COLUMN detail_content TEXT NOT NULL DEFAULT '';

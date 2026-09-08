@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS content_settings (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL);

@@ -2,7 +2,7 @@
   "description": "蜜金活动预约微信小程序",
   "miniprogramRoot": "./",
   "compileType": "miniprogram",
-  "appid": "wx68cf835450231e30",
+  "appid": "wx692d68c907dcc82f",
   "projectname": "honeygold-booking",
   "setting": {
     "urlCheck": false,
@@ -33,5 +33,6 @@
     "ignore": [],
     "include": []
   },
-  "editorSetting": {}
+  "editorSetting": {},
+  "isGameTourist": false
 }

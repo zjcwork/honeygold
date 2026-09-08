@@ -1,0 +1,2 @@
+ALTER TABLE events ADD COLUMN contact_wechat TEXT NOT NULL DEFAULT '';
+ALTER TABLE events ADD COLUMN contact_qr TEXT NOT NULL DEFAULT '';

@@ -26,13 +26,20 @@ import {
 } from '@/components/ui/dialog';
 import { api, loginDemo, stateLabel, downloadCSV } from '@/lib/client';
 import Dashboard from './dashboard';
+import ContentManager from './content-manager';
+import EventImages from './event-images';
+import EventDetailEditor from './event-detail-editor';
+import ExperienceManager from './experience-manager';
+import SlotGroups from './slot-groups';
+import SlotTimeFields from './slot-time-fields';
 const nav = [
   ['工作台', LayoutDashboard],
   ['活动管理', CalendarDays],
-  ['预约管理', Ticket],
   ['场次与名额', Calendar],
-  ['会员管理', Users],
+  ['预约管理', Ticket],
   ['现场核销', ScanLine],
+  ['开屏与轮播', MonitorSmartphone],
+  ['会员管理', Users],
 ] as const;
 const initial = { events: [], bookings: [], slots: [], users: [], demo: true };
 export function Badge({ value }: any) {
@@ -127,7 +134,8 @@ export default function Home() {
     setNeedsLogin(false);
   }, []);
   useEffect(() => {
-    setView(new URLSearchParams(location.search).get('view') || '工作台');
+    const requestedView=new URLSearchParams(location.search).get('view');
+    setView(requestedView==='体验管理'?'活动管理':requestedView || '工作台');
     (async () => {
       try {
         const c = await api('config');
@@ -193,7 +201,7 @@ export default function Home() {
       const result = await api(path, body);
       await refresh();
       setModal(null);
-      setToast(message);
+      setToast(path==='admin/slots/batch'?`已新增 ${result.created} 场，跳过 ${result.skipped} 个已有场次`:message);
       return result;
     } catch (e: any) {
       setError(e.message);
@@ -307,7 +315,6 @@ export default function Home() {
             运营管理 <span>/</span> <b>{view}</b>
           </div>
           <div className="top-right">
-            {data.demo && <span className="demo-tag">演示工作区</span>}
             <a href="/mini">
               <MonitorSmartphone size={16} />
               小程序预览
@@ -353,27 +360,6 @@ export default function Home() {
                 创建活动
               </Button>
             )}
-            {view === '场次与名额' && (
-              <Button
-                className="primary"
-                onClick={() =>
-                  setModal({
-                    type: 'slot',
-                    value: {
-                      eventId: data.events[0]?.id,
-                      experience: '鎏金美甲 Beauty Bar',
-                      date: data.events[0]?.start_date || '',
-                      time: '10:30',
-                      capacity: 2,
-                    },
-                  })
-                }
-                disabled={!data.events.length}
-              >
-                <Plus />
-                添加场次
-              </Button>
-            )}
           </div>
           {error && (
             <div role="alert" className="alert">
@@ -416,6 +402,7 @@ export default function Home() {
             <div className="empty">正在读取工作空间…</div>
           ) : (
             <>
+              {view === '开屏与轮播' && <ContentManager events={data.events} />}
               {view === '工作台' && (
                 <>
                   <div className="stats">
@@ -441,7 +428,14 @@ export default function Home() {
               )}
               {view === '活动管理' && (
                 <>
-                  <div className="toolbar">
+                  <div className="toolbar activity-filter-toolbar">
+                    <Input
+                      aria-label="搜索活动"
+                      placeholder="搜索活动名称"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      className="search-input"
+                    />
                     <div className="tabs">
                       {[
                         ['all', '全部活动'],
@@ -458,13 +452,6 @@ export default function Home() {
                         </button>
                       ))}
                     </div>
-                    <Input
-                      aria-label="搜索活动"
-                      placeholder="搜索活动名称"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                      className="search-input"
-                    />
                   </div>
                   <div className="panel data-panel">
                     <div className="table-wrap">
@@ -526,6 +513,8 @@ export default function Home() {
                                     >
                                       编辑
                                     </Button>
+                                    <Button variant="ghost" onClick={()=>setModal({type:'experiences',value:e})}>体验维护</Button>
+                                    <Button variant="ghost" disabled={busy} onClick={()=>setModal({type:'confirm',title:'删除活动',description:`确认删除「${e.title}」？该活动及其体验、场次将一并删除，无法恢复。有预约记录的活动不能删除。`,path:'admin/events/delete',body:{id:e.id}})}>删除</Button>
                                     <Button
                                       variant="ghost"
                                       onClick={() => {
@@ -592,7 +581,7 @@ export default function Home() {
               )}
               {view === '预约管理' && (
                 <>
-                  <div className="toolbar">
+                  <div className="toolbar booking-filter-toolbar">
                     <Input
                       aria-label="搜索预约"
                       className="search-input"
@@ -674,91 +663,10 @@ export default function Home() {
               )}
               {view === '场次与名额' && (
                 <>
-                  <div className="toolbar">
-                    <select
-                      aria-label="选择活动"
-                      className="search-input"
-                      value={eventFilter}
-                      onChange={(e) => setEventFilter(e.target.value)}
-                    >
-                      <option value="all">全部活动</option>
-                      {data.events.map((e: any) => (
-                        <option key={e.id} value={e.id}>
-                          {e.title}
-                        </option>
-                      ))}
-                    </select>
-                    <Input
-                      aria-label="搜索场次"
-                      className="search-input"
-                      placeholder="搜索日期、时间或体验"
-                      value={query}
-                      onChange={(e) => setQuery(e.target.value)}
-                    />
-                    <span className="muted">共 {slots.length} 场</span>
-                  </div>
-                  <section className="panel">
-                    <div className="table-wrap">
-                      <table>
-                        <thead>
-                          <tr>
-                            {[
-                              '活动 / 体验',
-                              '日期',
-                              '时间',
-                              '名额使用',
-                              '候补',
-                              '操作',
-                            ].map((t) => (
-                              <th key={t}>{t}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {slots.map((s: any) => (
-                            <tr key={s.id}>
-                              <td>
-                                {s.experience}
-                                <small>{s.title}</small>
-                              </td>
-                              <td>{s.date}</td>
-                              <td>{s.time}</td>
-                              <td>
-                                {s.booked} / {s.capacity}
-                                <progress
-                                  style={{
-                                    display: 'block',
-                                    width: 80,
-                                    height: 4,
-                                    accentColor: '#779377',
-                                    marginTop: 8,
-                                  }}
-                                  value={s.booked}
-                                  max={s.capacity}
-                                />
-                              </td>
-                              <td>{s.waiting} 人</td>
-                              <td>
-                                <Button
-                                  variant="ghost"
-                                  onClick={() =>
-                                    setModal({ type: 'slot', value: s })
-                                  }
-                                >
-                                  调整名额
-                                </Button>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {!slots.length && (
-                        <div className="empty">
-                          暂无场次，请添加体验时间与名额。
-                        </div>
-                      )}
-                    </div>
-                  </section>
+                  <SlotGroups slots={data.slots} events={data.events} experiences={data.experiences || []} eventId={eventFilter} onEventChange={setEventFilter} query="" busy={busy}
+                    onEdit={s=>setModal({type:'slot',value:s})}
+                    onAdd={s=>setModal({type:'slot',value:s})}
+                    onDelete={s=>{if(window.confirm(`确认删除 ${s.date} ${s.time} 的「${s.experience}」场次？有预约记录的场次无法删除。`))act('admin/slots/delete',{id:s.id},'场次已删除')}} />
                 </>
               )}
               {view === '会员管理' && (
@@ -820,11 +728,6 @@ export default function Home() {
                   <ScanLine size={48} />
                   <h2>欢迎嘉宾登岛</h2>
                   <p>使用扫码枪扫描二维码，或粘贴完整入场码。</p>
-                  {data.demo && (
-                    <div className="alert">
-                      演示模式可提前核销；正式模式校验到场时间。
-                    </div>
-                  )}
                   <form
                     onSubmit={async (e) => {
                       e.preventDefault();
@@ -959,13 +862,13 @@ export default function Home() {
       >
         <DialogContent className="dialog-large">
           <DialogTitle>
-            {modal?.type === 'event'
+            {modal?.type === 'experiences' ? '活动体验维护' : modal?.type === 'event'
               ? modal.value.id
                 ? '编辑活动'
                 : '创建活动'
               : modal?.type === 'slot'
                 ? modal.value.id
-                  ? '调整场次名额'
+                  ? '编辑场次'
                   : '添加体验场次'
                 : modal?.type === 'booking'
                   ? '预约详情'
@@ -981,6 +884,7 @@ export default function Home() {
                   : 'HONEY GOLD CLUB'}
           </DialogDescription>
           {error && <div className="alert">{error}</div>}
+          {modal?.type === 'experiences' && <><h3>{modal.value.title}</h3><ExperienceManager key={modal.value.id} eventId={modal.value.id} items={(data.experiences||[]).filter((e:any)=>e.event_id===modal.value.id)} refresh={refresh}/></>}
           {modal?.type === 'event' && (
             <form
               className="form-grid"
@@ -1009,13 +913,16 @@ export default function Home() {
                 </label>
               ))}
               <label className="field">
-                活动介绍
-                <textarea
-                  name="description"
-                  defaultValue={modal.value.description}
-                  required
-                  maxLength={8000}
-                />
+                首页活动简介
+                <textarea name="summary" defaultValue={modal.value.summary || ''} maxLength={300} rows={3} placeholder="仅用于首页活动列表，最多300字" />
+              </label>
+              <EventImages event={modal.value} />
+              <label className="field">客服微信号<Input name="contact_wechat" defaultValue={modal.value.contact_wechat||''} maxLength={100} placeholder="报名成功后展示，可复制" /></label>
+              <label className="field">客服微信二维码<Input name="contact_qr" type="url" defaultValue={modal.value.contact_qr||''} maxLength={2048} placeholder="https://…" /><small>填写客服二维码图片地址，用于报名成功页。</small></label>
+              <EventDetailEditor event={modal.value} />
+              <label className="field">活动须知
+                <textarea name="notices" defaultValue={modal.value.notices || ''} rows={6} maxLength={8000} placeholder="填写本活动的参与须知" />
+                <small>独立展示在详情页，留空则不显示。此处文案不会改变系统的预约及取消规则。</small>
               </label>
               <Button type="submit" disabled={busy} className="primary">
                 {busy ? '保存中…' : '保存活动'}
@@ -1029,17 +936,17 @@ export default function Home() {
                 e.preventDefault();
                 const f = Object.fromEntries(new FormData(e.currentTarget));
                 act(
-                  'admin/slots',
-                  { ...f, id: modal.value.id, capacity: Number(f.capacity) },
+                  f.batch==='yes'?'admin/slots/batch':'admin/slots',
+                  { ...f, id: modal.value.id, capacity: Number(f.capacity), interval:Number(f.interval) },
                   '场次已保存',
                 );
               }}
             >
-              {!modal.value.id && (
-                <>
+              <p className="muted">已有预约记录的场次仅支持调整名额，不能修改体验、日期、时间或删除。</p>
+              <>
                   <label className="field">
                     活动
-                    <select name="eventId" defaultValue={modal.value.eventId}>
+                    <select name="eventId" disabled={!!modal.value.id} value={modal.value.eventId || modal.value.event_id} onChange={e=>setModal({...modal,value:{...modal.value,eventId:e.target.value,experience:''}})}>
                       {data.events.map((e: any) => (
                         <option key={e.id} value={e.id}>
                           {e.title}
@@ -1049,14 +956,9 @@ export default function Home() {
                   </label>
                   <label className="field">
                     体验
-                    <select name="experience">
-                      {[
-                        '鎏金美甲 Beauty Bar',
-                        '微醺特调 Gold Bar',
-                        '仅登岛参观',
-                      ].map((t) => (
-                        <option key={t}>{t}</option>
-                      ))}
+                    <select name="experience" required={(data.experiences||[]).some((e:any)=>e.event_id===(modal.value.eventId||modal.value.event_id))} value={modal.value.experience} onChange={e=>setModal({...modal,value:{...modal.value,experience:e.target.value}})}>
+                      {(data.experiences||[]).some((e:any)=>e.event_id===(modal.value.eventId||modal.value.event_id)) ? <option value="" disabled>请选择本活动的体验</option> : <option value="">无需选择体验</option>}
+                      {(data.experiences || []).filter((e:any)=>e.event_id===(modal.value.eventId||modal.value.event_id) && (e.enabled || e.name===modal.value.experience)).map((e:any)=>(<option key={e.id} value={e.name}>{e.name}{e.enabled?'':'（已停用）'}</option>))}
                     </select>
                   </label>
                   <label className="field">
@@ -1068,19 +970,10 @@ export default function Home() {
                       required
                     />
                   </label>
-                  <label className="field">
-                    时间
-                    <Input
-                      name="time"
-                      type="time"
-                      defaultValue={modal.value.time}
-                      required
-                    />
-                  </label>
+                  <SlotTimeFields initialTime={modal.value.time} editing={!!modal.value.id} />
                 </>
-              )}
               <label className="field">
-                总名额
+                每场总名额
                 <Input
                   type="number"
                   name="capacity"
@@ -1091,8 +984,9 @@ export default function Home() {
                 />
               </label>
               <Button type="submit" disabled={busy} className="primary">
-                保存名额
+                保存场次
               </Button>
+              {modal.value.id && <Button type="button" variant="outline" disabled={busy} onClick={()=>{if(window.confirm('确认删除此场次？有预约记录的场次无法删除。'))act('admin/slots/delete',{id:modal.value.id},'场次已删除')}}>删除场次</Button>}
             </form>
           )}
           {modal?.type === 'booking' && (

@@ -1,3 +1,4 @@
+import {generateSlotTimes} from './slot-times';
 import { flushNotices, subscriptionReady } from './notifications';
 import QRCode from 'qrcode';
 import { env } from 'cloudflare:workers';
@@ -40,13 +41,18 @@ const experienceNames = [
   '微醺特调 Gold Bar',
   '仅登岛参观',
 ];
+async function validSlotExperience(eventId:string,experience:unknown) {
+  if (experience === '') return !(await one('SELECT id FROM experiences WHERE event_id=? LIMIT 1',eventId));
+  return typeof experience === 'string' && !!(await one('SELECT id FROM experiences WHERE event_id=? AND name=? AND enabled=1',eventId,experience));
+}
 async function seed() {
   if (!demo()) return;
+  if (await one("SELECT id FROM content_settings WHERE id='demo_seed_disabled'")) return;
   const id = 'honey-island-2026';
   if (await one('SELECT id FROM events WHERE id=?', id)) return;
   const stmts = [
     q(
-      'INSERT OR IGNORE INTO events VALUES(?,?,?,?,?,?,?,?,?)',
+      'INSERT OR IGNORE INTO events(id,title,subtitle,description,location,start_date,end_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
       id,
       '蜜金 · 海岛漫游记',
       'HONEY GOLD CLUB',
@@ -58,6 +64,7 @@ async function seed() {
       now(),
     ),
   ];
+  for (const name of experienceNames) stmts.push(q('INSERT OR IGNORE INTO experiences(id,event_id,name,enabled) VALUES(?,?,?,1)',uuid(),id,name));
   for (let day = 15; day <= 18; day++)
     for (let type = 0; type < 3; type++) {
       const times =
@@ -137,7 +144,7 @@ async function wxToken() {
   assert(r.access_token, '微信服务暂不可用', 502);
   return r.access_token;
 }
-const joined = `SELECT b.*,e.title,e.location,s.experience,s.date,s.time FROM bookings b JOIN events e ON b.event_id=e.id JOIN slots s ON b.slot_id=s.id`;
+const joined = `SELECT b.*,e.title,e.subtitle,e.description,e.notices,e.contact_wechat,e.contact_qr,e.location,s.experience,s.date,s.time FROM bookings b JOIN events e ON b.event_id=e.id JOIN slots s ON b.slot_id=s.id`;
 const upcoming = (s: any) => new Date(`${s.date}T${s.time}:00+08:00`).getTime();
 const promote = (slotId: string) =>
   q(
@@ -151,6 +158,11 @@ export async function handle(req: Request) {
     const path = new URL(req.url).pathname.replace(/^\/api\//, '');
     const method = req.method;
     const b: any = method === 'GET' ? {} : await req.json().catch(() => ({}));
+    if (path === 'content' && method === 'GET') {
+      const row = await one("SELECT payload FROM content_settings WHERE id='home'");
+      const c = row ? JSON.parse(row.payload) : { splash: null, slides: [] };
+      return response({ splash: c.splash?.enabled ? c.splash : null, slides: c.slides.filter((s: any) => s.enabled) });
+    }
     if (path === 'config')
       return response({
         demo: demo(),
@@ -173,6 +185,12 @@ export async function handle(req: Request) {
       return response(
         await issue(userId, b.role === 'admin' ? 'admin' : 'user'),
       );
+    }
+    if (path === 'auth/me' && method === 'GET') {
+      const s=await session(req);
+      assert(s.role==='user','请使用用户身份登录',403);
+      const user=await one('SELECT phone FROM users WHERE id=?',s.user_id);
+      return response({authenticated:true,phone:user?.phone||'',demo:demo()});
     }
     if (path === 'auth/admin' && method === 'POST') {
       assert(
@@ -401,6 +419,29 @@ export async function handle(req: Request) {
     }
     if (path.startsWith('admin/')) {
       await session(req, true);
+      if (path === 'admin/content') {
+        if (method === 'GET') {
+          const row = await one("SELECT payload FROM content_settings WHERE id='home'");
+          return response(row ? JSON.parse(row.payload) : { splash: { title: '', image: '', eventId: '', enabled: false, duration: 3 }, slides: [] });
+        }
+        assert(method === 'POST', '不支持的操作', 405);
+        assert(b.splash && Array.isArray(b.slides) && b.slides.length <= 10, '最多添加10张轮播图');
+        const clean = async (x: any) => {
+          assert(x && typeof x.enabled === 'boolean', '配置格式错误');
+          assert(typeof x.image === 'string' && x.image.trim().length <= 2048, '图片地址不能超过2048个字符，请使用直接图片链接');
+          assert(typeof x.title === 'string' && x.title.trim().length <= 80, '标题不能超过80个字符');
+          assert(typeof x.eventId === 'string' && x.eventId.trim().length <= 100, '关联活动格式错误');
+          const image = text(x.image, 2048), title = text(x.title, 80), eventId = text(x.eventId, 100);
+          assert(!x.enabled || image, '启用时必须填写图片地址');
+          if (image) { let u; try { u = new URL(image); } catch {} assert(u?.protocol === 'https:', '图片请使用HTTPS地址'); }
+          if (eventId) assert(await one('SELECT id FROM events WHERE id=?', eventId), '关联活动不存在');
+          return { title, image, eventId, enabled: x.enabled };
+        };
+        assert(Number.isInteger(b.splash.duration) && b.splash.duration >= 1 && b.splash.duration <= 10, '开屏时间须为1至10秒');
+        const value = { splash: { ...await clean(b.splash), duration: b.splash.duration }, slides: await Promise.all(b.slides.map(clean)) };
+        await q("INSERT INTO content_settings(id,payload) VALUES('home',?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", JSON.stringify(value)).run();
+        return response(value);
+      }
       if (path === 'admin/notifications' && method === 'POST') {
         await q(
           "UPDATE notifications SET status='pending' WHERE status='failed'",
@@ -411,6 +452,7 @@ export async function handle(req: Request) {
       if (path === 'admin/overview') {
         await seed();
         return response({
+          experiences: await all('SELECT * FROM experiences ORDER BY rowid'),
           events: await all('SELECT * FROM events ORDER BY created_at DESC'),
           bookings: await all(joined + ' ORDER BY b.created_at DESC'),
           slots: await all(
@@ -423,7 +465,53 @@ export async function handle(req: Request) {
           demo: demo(),
         });
       }
+      if (path === 'admin/experiences/delete' && method === 'POST') {
+        const item = await one('SELECT * FROM experiences WHERE id=? AND event_id=?',b.id,b.eventId);
+        assert(item,'体验不存在',404);
+        const result = await q('DELETE FROM experiences WHERE id=? AND event_id=? AND NOT EXISTS(SELECT 1 FROM slots WHERE event_id=? AND experience=?)',b.id,b.eventId,b.eventId,item.name).run();
+        assert(result.meta.changes === 1,'此体验仍有关联场次，请先调整或删除场次；有预约记录时可停用体验');
+        return response({ok:true});
+      }
+      if (path === 'admin/experiences' && method === 'POST') {
+        const name = text(b.name,80);
+        assert(await one('SELECT id FROM events WHERE id=?',b.eventId), '请选择所属活动');
+        assert(name && typeof b.enabled === 'boolean', '请填写体验名称（最多80字）及启用状态');
+        assert(!(await one('SELECT id FROM experiences WHERE event_id=? AND name=? AND id<>?',b.eventId,name,b.id||'')), '体验名称已存在');
+        if (b.id) {
+          const previous = await one('SELECT * FROM experiences WHERE id=? AND event_id=?',b.id,b.eventId);
+          assert(previous,'体验不存在',404);
+          await db().batch([
+            q('UPDATE experiences SET name=?,enabled=? WHERE id=?',name,b.enabled?1:0,b.id),
+            q('UPDATE slots SET experience=? WHERE experience=? AND event_id=?',name,previous.name,b.eventId),
+          ]);
+        } else await q('INSERT INTO experiences(id,event_id,name,enabled) VALUES(?,?,?,?)',uuid(),b.eventId,name,b.enabled?1:0).run();
+        return response({ok:true});
+      }
       if (path === 'admin/events' && method === 'POST') {
+        const media: Record<string,string> = {};
+        if(b.contact_wechat !== undefined){assert(typeof b.contact_wechat==='string' && b.contact_wechat.trim().length<=100,'客服微信最多100字');media.contact_wechat=b.contact_wechat.trim();}
+        if(b.contact_qr !== undefined){assert(typeof b.contact_qr==='string' && b.contact_qr.trim().length<=2048,'客服二维码地址无效');const value=b.contact_qr.trim();if(value){let url;try{url=new URL(value)}catch{}assert(url?.protocol==='https:' && !url.username && !url.password,'客服二维码请填写HTTPS图片地址');}media.contact_qr=value;}
+
+        if (b.notices !== undefined) {
+          assert(typeof b.notices === 'string' && b.notices.trim().length <= 8000, '活动须知不能超过8000字');
+          media.notices = b.notices.trim();
+        }
+        if (b.summary !== undefined) {
+          assert(typeof b.summary === 'string' && b.summary.trim().length <= 300, '首页活动简介不能超过300字');
+          media.summary = b.summary.trim();
+        }
+        for (const field of ['cover_image','hero_image','detail_images']) {
+          if (b[field] === undefined) continue;
+          assert(typeof b[field] === 'string', '图片配置格式错误');
+          const urls = b[field].split(/\r?\n/).map((v:string)=>v.trim()).filter(Boolean);
+          assert(urls.length <= (field === 'detail_images' ? 20 : 1), '封面和顶部图各限1张，详情图最多20张');
+          for (const url of urls) {
+            let parsed; try { parsed = new URL(url); } catch {}
+            assert(url.length <= 2048 && parsed?.protocol === 'https:' && !parsed.username && !parsed.password, '请填写有效的HTTPS图片地址，每个地址不能超过2048字符');
+          }
+          media[field] = urls.join('\n');
+        }
+
         assert(
           text(b.title, 100) &&
             text(b.location, 200) &&
@@ -462,7 +550,7 @@ export async function handle(req: Request) {
           ).run();
         } else
           await q(
-            'INSERT INTO events VALUES(?,?,?,?,?,?,?,?,?)',
+            'INSERT INTO events(id,title,subtitle,description,location,start_date,end_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
             id,
             text(b.title, 100),
             text(b.subtitle) || 'HONEY GOLD CLUB',
@@ -473,7 +561,25 @@ export async function handle(req: Request) {
             'draft',
             now(),
           ).run();
+        if (Object.keys(media).length) {
+          const keys = Object.keys(media);
+          await q('UPDATE events SET '+keys.map(k=>k+'=?').join(',')+' WHERE id=?', ...keys.map(k=>media[k]),id).run();
+        }
         return response({ id });
+      }
+      if (path === 'admin/events/delete' && method === 'POST') {
+        const id=text(b.id,100);
+        assert(await one('SELECT id FROM events WHERE id=?',id),'活动不存在',404);
+        assert(!(await one('SELECT id FROM bookings WHERE event_id=? LIMIT 1',id)),'此活动已有预约记录，不能删除；可下架或结束活动');
+        const config=await one("SELECT payload FROM content_settings WHERE id='home'");
+        if(config){const content=JSON.parse(config.payload);assert(content.splash?.eventId!==id && !(content.slides||[]).some((s:any)=>s.eventId===id),'此活动被开屏或轮播关联，请先解除关联');}
+        const result=await db().batch([
+          q('DELETE FROM slots WHERE event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
+          q('DELETE FROM experiences WHERE event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
+          q('DELETE FROM events WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
+        ]);
+        assert(result[2].meta.changes===1,'此活动已有预约记录，不能删除');
+        return response({ok:true});
       }
       if (path === 'admin/event-status' && method === 'POST') {
         assert(['published', 'draft', 'ended'].includes(b.status), '无效状态');
@@ -486,6 +592,22 @@ export async function handle(req: Request) {
           );
         await q('UPDATE events SET status=? WHERE id=?', b.status, b.id).run();
         return response({ ok: true });
+      }
+      if (path === 'admin/slots/delete' && method === 'POST') {
+        assert(await one('SELECT id FROM slots WHERE id=?', b.id), '场次不存在', 404);
+        const result = await q('DELETE FROM slots WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE slot_id=?)', b.id,b.id).run();
+        assert(result.meta.changes === 1, '此场次已有预约记录，不能删除');
+        return response({ok:true});
+      }
+      if (path === 'admin/slots/batch' && method === 'POST') {
+        const event=await one('SELECT * FROM events WHERE id=?',b.eventId);
+        assert(event && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && b.date>=event.start_date && b.date<=event.end_date,'场次日期需在活动日期内');
+        assert(await validSlotExperience(b.eventId,b.experience),'请选择本活动已启用的体验');
+        assert(Number.isInteger(b.capacity)&&b.capacity>=1&&b.capacity<=10000,'每场名额须为1至10000的整数');
+        let times:string[];try{times=generateSlotTimes(b.startTime,b.endTime,b.interval)}catch(e:any){throw new ApiError(e.message)}
+        const results=await db().batch(times.map(time=>q('INSERT INTO slots(id,event_id,experience,date,time,capacity) SELECT ?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM slots WHERE event_id=? AND experience=? AND date=? AND time=?)',uuid(),b.eventId,b.experience,b.date,time,b.capacity,b.eventId,b.experience,b.date,time)));
+        const created=results.reduce((n,r)=>n+(r.meta.changes||0),0);
+        return response({ok:true,created,skipped:times.length-created});
       }
       if (path === 'admin/slots' && method === 'POST') {
         assert(
@@ -501,6 +623,18 @@ export async function handle(req: Request) {
           );
           assert(slot, '场次不存在', 404);
           assert(b.capacity >= slot.booked, '名额不能低于已预约人数');
+          const experience = b.experience ?? slot.experience, date = b.date ?? slot.date, time = b.time ?? slot.time;
+          const event = await one('SELECT * FROM events WHERE id=?', slot.event_id);
+          assert((experience === slot.experience || await validSlotExperience(slot.event_id,experience)) && /^([01]\d|2[0-3]):[0-5]\d$/.test(time), '请填写正确的体验与时间');
+          assert(/^\d{4}-\d{2}-\d{2}$/.test(date) && date >= event.start_date && date <= event.end_date, '场次日期需在活动日期内');
+          const changed = experience !== slot.experience || date !== slot.date || time !== slot.time;
+          if (changed) {
+            assert(!(await one('SELECT id FROM bookings WHERE slot_id=? LIMIT 1', b.id)), '此场次已有预约记录，只能调整名额');
+            assert(!(await one('SELECT id FROM slots WHERE event_id=? AND experience=? AND date=? AND time=? AND id<>?',slot.event_id,experience,date,time,b.id)), '该场次已存在');
+            const updated = await q('UPDATE slots SET experience=?,date=?,time=? WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE slot_id=?)',experience,date,time,b.id,b.id).run();
+            assert(updated.meta.changes === 1, '此场次已有预约记录，只能调整名额');
+          }
+
           const stmts = [
             q(
               "UPDATE slots SET capacity=? WHERE id=? AND ? >= (SELECT COUNT(*) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked'))",
@@ -527,7 +661,7 @@ export async function handle(req: Request) {
             '场次日期需在活动日期内',
           );
           assert(
-            experienceNames.includes(b.experience) &&
+            (await validSlotExperience(b.eventId,b.experience)) &&
               /^([01]\d|2[0-3]):[0-5]\d$/.test(b.time),
             '请填写正确的体验与时间',
           );

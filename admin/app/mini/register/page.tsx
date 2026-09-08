@@ -4,9 +4,11 @@ import { ChevronLeft, CalendarDays, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api, loginDemo } from '@/lib/client';
+import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import '../mini.css';
 import './register.css';
 export default function Register() {
+  const [booking,setBooking]=useState<any>(null),[successOpen,setSuccessOpen]=useState(false),[subscriptionMessage,setSubscriptionMessage]=useState('');
   const [event, setEvent] = useState<any>(null),
     [selected, setSelected] = useState<any>(null),
     [isDemo, setIsDemo] = useState(true),
@@ -38,6 +40,7 @@ export default function Register() {
   }, []);
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    if(booking){setSuccessOpen(true);return;}
     if (busy) return;
     const f = Object.fromEntries(new FormData(e.currentTarget));
     setBusy(true);
@@ -52,13 +55,15 @@ export default function Register() {
         { ...f, slotId: selected.id, terms, photoConsent: photo },
         'user',
       );
-      window.location.replace('/mini?booking=' + encodeURIComponent(b.id));
+      setBooking(b);setSuccessOpen(true);setBusy(false);
     } catch (e: any) {
       setError(e.message);
       setBusy(false);
     }
   }
+  function viewBooking(){if(booking)window.location.replace('/mini?booking='+encodeURIComponent(booking.id));}
   function back() {
+    if(booking){viewBooking();return;}
     if (history.length > 1) history.back();
     else
       location.assign(
@@ -67,6 +72,7 @@ export default function Register() {
   }
   return (
     <div className="mini-stage">
+      <Dialog open={successOpen} onOpenChange={setSuccessOpen}><DialogContent showCloseButton={false} className="booking-success-web"><button className="booking-success-web-close" onClick={()=>setSuccessOpen(false)}>取消</button><div className="booking-success-web-check">✓</div><DialogTitle>{booking?.status==='waitlisted'?'候补提交成功':'报名成功'}</DialogTitle><DialogDescription>{booking?.status==='waitlisted'?'当前名额已满，请等待递补':'报名已完成，可查看报名信息及入场凭证。'}</DialogDescription>{subscriptionMessage&&<p role="status">{subscriptionMessage}</p>}<div className="booking-success-web-actions"><button onClick={()=>setSubscriptionMessage('请在微信小程序中订阅活动通知。')}>订阅活动通知</button><button onClick={viewBooking}>查看报名信息</button></div></DialogContent></Dialog>
       <main className="phone registration-phone">
         <div className="wechat-top unified-navigation">
           <button
@@ -89,7 +95,7 @@ export default function Register() {
           {event && selected ? (
             <>
               <div className="registration-event">
-                <div className="mini-cover">
+                {event.cover_image ? <img className="event-cover-image" src={event.cover_image} alt={event.title}/> : <div className="mini-cover">
                   <small>
                     HONEY GOLD
                     <br />
@@ -100,7 +106,7 @@ export default function Register() {
                     <br />
                     漫游记
                   </b>
-                </div>
+                </div>}
                 <div>
                   <small>{event.subtitle}</small>
                   <h2>{event.title}</h2>
@@ -187,7 +193,7 @@ export default function Register() {
                   className="mini-submit booking-submit"
                   disabled={busy || !terms}
                 >
-                  {busy ? '提交中…' : '提交预约'}
+                  {busy ? '提交中…' : booking?'查看报名结果':'提交预约'}
                 </Button>
               </form>
             </>

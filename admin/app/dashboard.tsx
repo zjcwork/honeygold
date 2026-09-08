@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useState } from 'react';
 import {
   CalendarDays,
   ScanLine,
@@ -10,14 +11,17 @@ import {
 import { Button } from '@/components/ui/button';
 import { BookingTable, Badge } from './page';
 export default function Dashboard({ data, navigate }: any) {
-  const event =
-    data.events.find((e: any) => e.status === 'published') || data.events[0];
+  const events = data.events.filter((e:any)=>e.status === 'published');
+  const [index,setIndex]=useState(0),[hovered,setHovered]=useState(false),[focused,setFocused]=useState(false),[paused,setPaused]=useState(false);
+  const count=events.length,activeIndex=count?index%count:0,event=events[activeIndex];
+  useEffect(()=>{if(count<2||hovered||focused||paused)return;const timer=setInterval(()=>setIndex(i=>(i+1)%count),5000);return()=>clearInterval(timer)},[count,hovered,focused,paused]);
+
   return (
     <div className="dashboard-grid">
-      <section className="panel featured">
+      <section className="panel featured" aria-label="进行中的活动轮播" aria-roledescription="轮播" onMouseEnter={()=>setHovered(true)} onMouseLeave={()=>setHovered(false)} onFocusCapture={()=>setFocused(true)} onBlurCapture={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setFocused(false)}}>
         <div className="panel-title">
           <h2>
-            正在筹备的活动 <span>{data.events.length}</span>
+            进行中的活动 <span>{count}</span>
           </h2>
           <Button variant="ghost" onClick={() => navigate('活动管理')}>
             全部活动
@@ -25,28 +29,19 @@ export default function Dashboard({ data, navigate }: any) {
           </Button>
         </div>
         {event ? (
-          <div className="feature-body">
-            <div className="event-poster">
-              <div>
-                HONEY GOLD
-                <br />
-                CLUB
-              </div>
-              <span>蜜金</span>
-              <strong>
-                海岛
-                <br />
-                漫游记
-              </strong>
-              <small>SHANGHAI · OCTOBER 2026</small>
-            </div>
+          <div className="feature-body" role="group" aria-roledescription="幻灯片" aria-label={`${activeIndex+1} / ${count}：${event.title}`}>
+            {event.cover_image ? <img className="event-poster dashboard-event-cover" src={event.cover_image} alt={event.title} /> : <div className="event-poster">
+              <div>{event.subtitle}</div>
+              <strong>{event.title}</strong>
+              <small>{event.start_date} – {event.end_date}</small>
+            </div>}
             <div className="feature-copy">
               <div style={{ position: 'absolute', right: 0, top: 0 }}>
                 <Badge value={event.status} />
               </div>
-              <div className="eyebrow">HONEY GOLD CLUB</div>
+              <div className="eyebrow">{event.subtitle}</div>
               <h2>{event.title}</h2>
-              <p>{event.description.slice(0, 48)}…</p>
+              {event.summary && <p>{event.summary.length > 48 ? event.summary.slice(0,48)+'…' : event.summary}</p>}
               <div className="event-meta">
                 <CalendarDays size={16} />
                 {event.start_date} – {event.end_date.slice(5)}
@@ -54,14 +49,7 @@ export default function Dashboard({ data, navigate }: any) {
               <div className="event-meta">⌖ {event.location}</div>
               <div className="feature-footer">
                 <span>
-                  {
-                    new Set(
-                      data.slots
-                        .filter((s: any) => s.event_id === event.id)
-                        .map((s: any) => s.experience),
-                    ).size
-                  }{' '}
-                  种登岛体验
+                  {(data.experiences || []).filter((x:any)=>x.event_id===event.id && x.enabled).length} 种已启用体验
                 </span>
                 <Button variant="outline" onClick={() => navigate('活动管理')}>
                   管理活动
@@ -71,8 +59,15 @@ export default function Dashboard({ data, navigate }: any) {
             </div>
           </div>
         ) : (
-          <div className="empty">暂无活动，请先创建活动。</div>
+          <div className="empty">暂无进行中的活动。</div>
         )}
+        {count>1 && <div className="featured-carousel-controls">
+          <Button variant="ghost" aria-label="上一个活动" onClick={()=>setIndex((activeIndex-1+count)%count)}>‹</Button>
+          <div className="featured-carousel-dots">{events.map((e:any,i:number)=><button type="button" key={e.id} aria-label={`查看活动：${e.title}`} aria-pressed={i===activeIndex} onClick={()=>setIndex(i)}/>)}</div>
+          <span>{activeIndex+1} / {count}</span>
+          <Button variant="ghost" aria-label="下一个活动" onClick={()=>setIndex((activeIndex+1)%count)}>›</Button>
+          <Button variant="ghost" onClick={()=>setPaused(p=>!p)}>{paused?'自动播放':'暂停轮播'}</Button>
+        </div>}
       </section>
       <section className="panel quick">
         <div className="panel-title">

@@ -1,0 +1,10 @@
+'use client';
+import { useEffect, useState, type ReactNode } from 'react';
+export default function HomeContent({children}:{children:ReactNode}) {
+ const [c,setC]=useState<any>(null),[index,setIndex]=useState(0),[remaining,setRemaining]=useState(0);
+ useEffect(()=>{const controller=new AbortController();fetch('/api/content',{signal:controller.signal}).then(r=>{if(!r.ok)throw Error();return r.json()}).then((v:any)=>{setC(v);if(!sessionStorage.getItem('hg_splash_seen')){setRemaining(v.splash?.duration||0);sessionStorage.setItem('hg_splash_seen','1')}}).catch(()=>{});return()=>controller.abort();},[]);
+ useEffect(()=>{if(!remaining)return;const t=setTimeout(()=>setRemaining(n=>n-1),1000);return()=>clearTimeout(t)},[remaining]);
+ useEffect(()=>{if(!c?.slides?.length)return;const t=setInterval(()=>setIndex(n=>(n+1)%c.slides.length),4000);return()=>clearInterval(t)},[c]);
+ function open(item:any){setRemaining(0);if(item.eventId)location.href='/mini?event='+encodeURIComponent(item.eventId)}
+ return <>{remaining>0&&c?.splash&&<div style={{position:'fixed',inset:0,zIndex:100,background:'#f0e7d7'}}><img src={c.splash.image} alt={c.splash.title} onClick={()=>open(c.splash)} onError={()=>setRemaining(0)} style={{width:'100%',height:'100%',objectFit:'contain'}}/><button onClick={()=>setRemaining(0)} style={{position:'absolute',top:28,right:24,background:'#555',color:'white',borderRadius:24,padding:'8px 18px'}}>跳过 {remaining}s</button></div>}{c?.slides?.length?<div style={{position:'relative'}}><button onClick={()=>open(c.slides[index])} style={{display:'block',width:'100%',padding:0,border:0}}><img src={c.slides[index].image} alt={c.slides[index].title||'活动轮播'} style={{width:'100%',height:290,objectFit:'cover'}}/></button><div style={{position:'absolute',bottom:12,left:0,right:0,display:'flex',justifyContent:'center',gap:8}}>{c.slides.map((s:any,i:number)=><button key={i} aria-label={`第${i+1}张轮播图`} onClick={()=>setIndex(i)} style={{width:10,height:10,borderRadius:'50%',background:i===index?'#214c38':'#fff',border:'1px solid #aaa',padding:0}}/>)}</div></div>:children}</>;
+}

@@ -7,6 +7,14 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 export const events = sqliteTable('events', {
+  contactWechat:text('contact_wechat').notNull().default(''),
+  contactQr:text('contact_qr').notNull().default(''),
+  notices: text('notices').notNull().default(''),
+  detailContent:text('detail_content').notNull().default(''),
+  summary: text('summary').notNull().default(''),
+  coverImage: text('cover_image').notNull().default(''),
+  heroImage: text('hero_image').notNull().default(''),
+  detailImages: text('detail_images').notNull().default(''),
   id: text('id').primaryKey(),
   title: text('title').notNull(),
   subtitle: text('subtitle').notNull(),
@@ -83,3 +91,7 @@ export const notifications = sqliteTable('notifications', {
   lastError: text('last_error'),
   updatedAt: text('updated_at').notNull(),
 });
+
+export const contentSettings = sqliteTable('content_settings', { id: text('id').primaryKey(), payload: text('payload').notNull() });
+
+export const experiences = sqliteTable('experiences', {id:text('id').primaryKey(),eventId:text('event_id').notNull().references(()=>events.id),name:text('name').notNull(),enabled:integer('enabled').notNull().default(1)}, t=>[uniqueIndex('experiences_event_name').on(t.eventId,t.name)]);

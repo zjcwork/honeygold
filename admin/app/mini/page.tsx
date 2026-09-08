@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import HomeContent from './home-content';
 import {
   ChevronLeft,
   Share,
@@ -251,13 +252,6 @@ export default function Mini() {
         </p>
         <div className="preview-note">
           小程序交互预览
-          {isDemo && (
-            <small>
-              演示预约与后台实时联动
-              <br />
-              请使用测试信息体验
-            </small>
-          )}
         </div>
       </aside>
       <main className="phone">
@@ -297,7 +291,7 @@ export default function Mini() {
           )}
           {!event && !booking && tab === 'events' && (
             <>
-              <div className="mini-hero">
+              <HomeContent><div className="mini-hero">
                 <div>
                   HONEY GOLD
                   <br />
@@ -311,7 +305,7 @@ export default function Mini() {
                 </h1>
                 <small>SHANGHAI · 15—18 OCTOBER 2026</small>
               </div>
-              <div className="mini-tabs">
+              </HomeContent><div className="mini-tabs">
                 {[
                   ['all', '全部活动'],
                   ['published', '进行中'],
@@ -335,7 +329,7 @@ export default function Mini() {
                       key={e.id}
                       onClick={() => openEvent(e.id)}
                     >
-                      <div className="mini-cover">
+                      {e.cover_image ? <img className="event-cover-image" src={e.cover_image} alt={e.title}/> : <div className="mini-cover">
                         <small>
                           HONEY
                           <br />
@@ -347,11 +341,11 @@ export default function Mini() {
                           漫游记
                         </b>
                         <span>蜜金</span>
-                      </div>
+                      </div>}
                       <div>
                         <small>{e.subtitle}</small>
                         <h2>{e.title}</h2>
-                        <p>{e.description.slice(0, 52)}…</p>
+                        {e.summary && <p>{e.summary.length > 52 ? e.summary.slice(0, 52) + '…' : e.summary}</p>}
                         <label>
                           <CalendarDays size={13} />
                           {e.start_date} — {e.end_date.slice(5)}
@@ -428,11 +422,11 @@ export default function Mini() {
           )}
           {event && !booking && (
             <>
-              <div className="detail-hero">
+              {event.hero_image ? <img className="event-hero-image" src={event.hero_image} alt={event.title}/> : <div className="detail-hero">
                 <small>HONEY GOLD CLUB</small>
                 <h1>{event.title.replace(' · ', '\n')}</h1>
                 <span>一场逃离城市的黄金假日</span>
-              </div>
+              </div>}
               <div className="detail-content">
                 <span className="status">{stateLabel(event.status)}</span>
                 <h1>{event.title}</h1>
@@ -446,12 +440,7 @@ export default function Mini() {
                 </p>
                 <h2>活动介绍</h2>
                 <p className="description">{event.description}</p>
-                <h2>活动须知</h2>
-                <p className="description">
-                  每场活动仅可预约一种体验。满额可提交候补，释放名额后按报名顺序递补。\n请提前
-                  8 小时以上修改或取消预约。请于预约时间前 15
-                  分钟到场。活动预约免费。
-                </p>
+                {event.notices && <><h2>活动须知</h2><p className="description">{event.notices}</p></>}
               </div>
               <div className="bottom-action">
                 <Button
@@ -478,7 +467,7 @@ export default function Mini() {
                   {booking.status === 'confirmed' ? <Check /> : <Ticket />}
                 </span>
                 <h1>
-                  {stateLabel(booking.status)}
+                  {booking.status==='confirmed'?'报名成功':stateLabel(booking.status)}
                   {booking.status === 'confirmed' ? '！' : ''}
                 </h1>
                 <p>
@@ -551,7 +540,7 @@ export default function Mini() {
                         .catch(() => setError('复制失败，请手动使用入场凭证'))
                     }
                   >
-                    复制入场码，体验后台核销
+                    <span>入场凭证编号</span><strong className="ticket-code-value">HG:{booking.code}</strong><span>点击复制凭证编号</span>
                   </button>
                 )}
                 {['confirmed', 'waitlisted'].includes(booking.status) && (
@@ -561,6 +550,15 @@ export default function Mini() {
                   </div>
                 )}
               </section>
+              <div className="success-activity-content">
+                {booking.description&&<><h2>活动介绍</h2><p className="description">{booking.description}</p></>}
+                {booking.notices&&<><h2>活动须知</h2><p className="description">{booking.notices}</p></>}
+                {(booking.contact_qr||booking.contact_wechat)&&<section className="success-contact">
+                  {booking.contact_qr&&<img src={booking.contact_qr} alt="客服微信二维码"/>}<p>添加小助手微信<br/>了解更多活动详情</p>
+                  {booking.contact_wechat&&<Button variant="ghost" onClick={()=>navigator.clipboard.writeText(booking.contact_wechat).then(()=>window.alert('客服微信已复制')).catch(()=>setError('复制失败，请手动复制微信号'))}>微信：{booking.contact_wechat} · 复制</Button>}
+                  {booking.contact_qr&&<a className="save-ticket" href={booking.contact_qr} target="_blank" rel="noopener noreferrer">打开客服二维码保存图片</a>}
+                </section>}
+              </div>
               {ticket && (
                 <Button className="save-ticket" onClick={saveTicket}>
                   保存入场凭证
@@ -636,7 +634,7 @@ export default function Mini() {
           {sheet === 'slots' && (
             <>
               <div className="slots-scroll">
-                <h3>选择场次</h3>
+                {(event.slots.some((s:any)=>s.experience) ) && <><h3>选择场次</h3>
                 <div className="choice-grid">
                   {Array.from(
                     new Set(event.slots.map((s: any) => s.experience)),
@@ -653,15 +651,14 @@ export default function Mini() {
                         setDate(first?.date || '');
                       }}
                     >
-                      {t.split(' ')[0]}
+                      {t.split(' ')[0] || '无体验'}
                       <small className={t === '仅登岛参观' ? 'visit-note' : ''}>
-                        {t.split(' ').slice(1).join(' ') ||
-                          '自由观展 + 迎宾区护照领取'}
+                        {t.split(' ').slice(1).join(' ') || (t==='仅登岛参观'?'自由观展 + 迎宾区护照领取':'')}
                       </small>
                     </button>
                   ))}
                 </div>
-                <h3>选择日期</h3>
+                </>}<h3>选择日期</h3>
                 <div className="choice-grid">
                   {Array.from(
                     new Set(
