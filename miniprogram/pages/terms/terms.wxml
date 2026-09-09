@@ -1,0 +1,1 @@
+<app-navigation title="{{title}}" show-back="{{true}}" bindback="back"/><view class="legal-page"><view wx:if="{{loading}}">正在加载…</view><view wx:elif="{{error}}">加载失败<button bindtap="loadContent">重新加载</button></view><text wx:else selectable class="legal-body">{{body}}</text></view>

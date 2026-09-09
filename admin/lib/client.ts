@@ -15,11 +15,6 @@ export async function api(path: string, data?: any, role = 'admin') {
   }
   return result;
 }
-export async function loginDemo(role: string) {
-  const r = await api('auth/demo', { role }, role);
-  localStorage.setItem('hg_' + role, r.token);
-  return r;
-}
 export const stateLabel = (s: string) =>
   ({
     confirmed: '预约成功',

@@ -45,7 +45,7 @@ class Statement {
 }
 export const env: any = {
   ...process.env,
-  DEMO_MODE: process.env.DEMO_MODE ?? 'true',
+  DEMO_MODE: 'false',
   DB: {
     prepare: (sql: string) => new Statement(sql),
     batch: async (stmts: Statement[]) => {

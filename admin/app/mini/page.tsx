@@ -19,7 +19,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { api, loginDemo, stateLabel } from '@/lib/client';
+import { api, stateLabel } from '@/lib/client';
 import './mini.css';
 export default function Mini() {
   const [events, setEvents] = useState<any[]>([]),
@@ -56,8 +56,7 @@ export default function Mini() {
   }, []);
   async function ensureLogin() {
     if (!localStorage.getItem('hg_user')) {
-      if (!isDemo) throw Error('请使用微信小程序完成登录与预约');
-      await loginDemo('user');
+      throw Error('请使用微信小程序完成登录与预约');
     }
   }
   async function loadMine() {

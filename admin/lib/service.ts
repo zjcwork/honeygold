@@ -1,3 +1,4 @@
+import { defaultLegal, legalTitles } from './legal';
 import {generateSlotTimes} from './slot-times';
 import { flushNotices, subscriptionReady } from './notifications';
 import QRCode from 'qrcode';
@@ -14,7 +15,6 @@ const one = async (sql: string, ...values: any[]) =>
   (await q(sql, ...values).first()) as any;
 const uuid = () => crypto.randomUUID();
 const now = () => new Date().toISOString();
-const demo = () => conf.DEMO_MODE === 'true';
 const hash = async (value: string) =>
   Array.from(
     new Uint8Array(
@@ -23,6 +23,11 @@ const hash = async (value: string) =>
   )
     .map((v) => v.toString(16).padStart(2, '0'))
     .join('');
+async function passwordHash(password:string,salt:string) {
+  const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
+  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:new TextEncoder().encode(salt),iterations:100000,hash:'SHA-256'},key,256);
+  return Array.from(new Uint8Array(bits),v=>v.toString(16).padStart(2,'0')).join('');
+}
 class ApiError extends Error {
   constructor(
     message: string,
@@ -45,57 +50,6 @@ async function validSlotExperience(eventId:string,experience:unknown) {
   if (experience === '') return !(await one('SELECT id FROM experiences WHERE event_id=? LIMIT 1',eventId));
   return typeof experience === 'string' && !!(await one('SELECT id FROM experiences WHERE event_id=? AND name=? AND enabled=1',eventId,experience));
 }
-async function seed() {
-  if (!demo()) return;
-  if (await one("SELECT id FROM content_settings WHERE id='demo_seed_disabled'")) return;
-  const id = 'honey-island-2026';
-  if (await one('SELECT id FROM events WHERE id=?', id)) return;
-  const stmts = [
-    q(
-      'INSERT OR IGNORE INTO events(id,title,subtitle,description,location,start_date,end_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
-      id,
-      '蜜金 · 海岛漫游记',
-      'HONEY GOLD CLUB',
-      '十月，HONEY GOLD CLUB 在上海靠岸。我们把海风、日落与金箔带来，邀请你来一场逃离城市的黄金假日。\n\n① 迎宾区 Check-in\n办理入住，领取「岛屿护照」与俱乐部卡套。摄影师将为你拍摄专属「入住明信片」。\n\n② Gold Bar 微醺区\n调酒师现场调制蜜金品牌特调鸡尾酒，每日 14:00–17:00 限时开放，每日 20 杯。\n\n③ Beauty Bar 体验区\n专业美甲师打造蜜金专属金箔海岛美甲，每日限定 10 位，体验约 30 分钟。\n\n④ Product Gallery 产品展示区\n以「酒店精品陈列室」为灵感，海岛系列产品沉浸式陈列。',
-      '上海 · 活动地址待确认',
-      '2026-10-15',
-      '2026-10-18',
-      'published',
-      now(),
-    ),
-  ];
-  for (const name of experienceNames) stmts.push(q('INSERT OR IGNORE INTO experiences(id,event_id,name,enabled) VALUES(?,?,?,1)',uuid(),id,name));
-  for (let day = 15; day <= 18; day++)
-    for (let type = 0; type < 3; type++) {
-      const times =
-        type === 1
-          ? ['14:00', '14:30', '15:00', '15:30', '16:00']
-          : [
-              '10:30',
-              '11:00',
-              '11:30',
-              '12:00',
-              '12:30',
-              '14:00',
-              '14:30',
-              '15:00',
-            ];
-      times.forEach((time, i) =>
-        stmts.push(
-          q(
-            'INSERT OR IGNORE INTO slots VALUES(?,?,?,?,?,?)',
-            `${day}-${type}-${i}`,
-            id,
-            experienceNames[type],
-            `2026-10-${day}`,
-            time,
-            type === 0 ? (i < 2 ? 2 : 1) : type === 1 ? 4 : 20,
-          ),
-        ),
-      );
-    }
-  await db().batch(stmts);
-}
 async function session(req: Request, admin = false) {
   const token = req.headers.get('authorization')?.replace(/^Bearer /, '') || '';
   const s =
@@ -107,11 +61,12 @@ async function session(req: Request, admin = false) {
     ));
   assert(s, '请先登录', 401);
   assert(
-    demo() || !s.user_id.startsWith('demo-'),
-    '演示会话已失效，请重新登录',
+    !s.user_id.startsWith('demo-'),
+    '登录已失效，请重新登录',
     401,
   );
   assert(!admin || s.role === 'admin', '没有管理权限', 403);
+  if (s.role === 'admin') assert(await one('SELECT id FROM admin_users WHERE id=? AND enabled=1',s.user_id),'账号已停用，请重新登录',401);
   return s;
 }
 async function issue(userId: string, role: string) {
@@ -123,7 +78,7 @@ async function issue(userId: string, role: string) {
     role,
     Date.now() + 7 * 86400000,
   ).run();
-  return { token, role, demo: demo() };
+  return { token, role, demo: false };
 }
 async function wxToken() {
   assert(
@@ -157,7 +112,34 @@ export async function handle(req: Request) {
   try {
     const path = new URL(req.url).pathname.replace(/^\/api\//, '');
     const method = req.method;
+    const uploadPath = /^images\/([a-f0-9-]{36})$/.exec(path);
+    if (uploadPath && method === 'GET') {
+      const row = await one("SELECT payload FROM content_settings WHERE id=?", 'image:' + uploadPath[1]);
+      assert(row, '图片不存在', 404);
+      const image = JSON.parse(row.payload);
+      return new Response(Uint8Array.from(atob(image.data), c => c.charCodeAt(0)), { headers: { 'Content-Type': image.type, 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' } });
+    }
+    if (path === 'admin/images' && method === 'POST') {
+      await session(req, true);
+      assert(Number(req.headers.get('content-length') || 0) <= 1048576, '图片不能超过1MB');
+      const bytes = new Uint8Array(await req.arrayBuffer());
+      assert(bytes.length > 0 && bytes.length <= 1048576, '图片不能超过1MB');
+      const prefix = Array.from(bytes.slice(0, 12));
+      const type = prefix.slice(0,8).join(',') === '137,80,78,71,13,10,26,10' ? 'image/png' : prefix[0]===255 && prefix[1]===216 && prefix[2]===255 ? 'image/jpeg' : String.fromCharCode(...prefix.slice(0,6)).match(/^GIF8[79]a$/) ? 'image/gif' : String.fromCharCode(...prefix.slice(0,4))==='RIFF' && String.fromCharCode(...prefix.slice(8,12))==='WEBP' ? 'image/webp' : '';
+      assert(type, '仅支持JPG、PNG、WebP或GIF图片');
+      let binary = ''; for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
+      const id = uuid();
+      await q('INSERT INTO content_settings(id,payload) VALUES(?,?)', 'image:'+id, JSON.stringify({type,data:btoa(binary)})).run();
+      return response({url:new URL('/api/images/'+id, req.url).href});
+    }
+    const validImage = (value:string) => {
+      try { const u = new URL(value); return !u.username && !u.password && (u.protocol === 'https:' || (u.origin === new URL(req.url).origin && /^\/api\/images\/[a-f0-9-]{36}$/.test(u.pathname) && !u.search && !u.hash)); } catch { return false; }
+    };
     const b: any = method === 'GET' ? {} : await req.json().catch(() => ({}));
+    if (path === 'legal' && method === 'GET') {
+      const row = await one("SELECT payload FROM content_settings WHERE id='legal'");
+      return response(row ? JSON.parse(row.payload) : defaultLegal);
+    }
     if (path === 'content' && method === 'GET') {
       const row = await one("SELECT payload FROM content_settings WHERE id='home'");
       const c = row ? JSON.parse(row.payload) : { splash: null, slides: [] };
@@ -165,42 +147,30 @@ export async function handle(req: Request) {
     }
     if (path === 'config')
       return response({
-        demo: demo(),
+        demo: false,
         subscriptionTemplateId:
-          !demo() && subscriptionReady()
+          subscriptionReady()
             ? conf.WECHAT_SUBSCRIBE_TEMPLATE_ID
             : '',
       });
-    if (path === 'auth/demo' && method === 'POST') {
-      assert(demo(), '演示登录已关闭', 403);
-      await seed();
-      const userId = 'demo-' + uuid();
-      if (b.role !== 'admin')
-        await q(
-          'INSERT INTO users(id,name,created_at) VALUES(?,?,?)',
-          userId,
-          '演示访客',
-          now(),
-        ).run();
-      return response(
-        await issue(userId, b.role === 'admin' ? 'admin' : 'user'),
-      );
-    }
+    if (path === 'auth/demo') return response({error:'演示登录已停用，请使用正式登录'}, 403);
     if (path === 'auth/me' && method === 'GET') {
       const s=await session(req);
       assert(s.role==='user','请使用用户身份登录',403);
       const user=await one('SELECT phone FROM users WHERE id=?',s.user_id);
-      return response({authenticated:true,phone:user?.phone||'',demo:demo()});
+      return response({authenticated:true,phone:user?.phone||'',demo:false});
+    }
+    if (path === 'auth/logout' && method === 'POST') {
+      const token = req.headers.get('authorization')?.replace(/^Bearer /, '') || '';
+      if (token) await q('DELETE FROM sessions WHERE hash=?', await hash(token)).run();
+      return response({ success: true });
     }
     if (path === 'auth/admin' && method === 'POST') {
-      assert(
-        conf.ADMIN_KEY &&
-          typeof b.key === 'string' &&
-          (await hash(b.key)) === (await hash(conf.ADMIN_KEY)),
-        '管理密钥不正确',
-        401,
-      );
-      return response(await issue('admin', 'admin'));
+      const account=await one('SELECT * FROM admin_users WHERE username=?',text(b.username,40));
+      assert(typeof b.password==='string' && b.password.length<=128,'账号或密码不正确',401);
+      const digest=await passwordHash(b.password,account?.salt || 'invalid-account-salt');
+      assert(account?.enabled && digest===account.password_hash,'账号或密码不正确',401);
+      return response(await issue(account.id,'admin'));
     }
     if (path === 'auth/wechat' && method === 'POST') {
       assert(text(b.code), '缺少微信登录凭证');
@@ -253,7 +223,7 @@ export async function handle(req: Request) {
       return response({ phone: r.phone_info.purePhoneNumber });
     }
     if (path === 'events' && method === 'GET') {
-      await seed();
+
       return response(
         await all(
           "SELECT * FROM events WHERE status IN ('published','ended') ORDER BY start_date DESC",
@@ -294,7 +264,7 @@ export async function handle(req: Request) {
       );
       assert(slot && slot.status === 'published', '该场次未开放预约');
       assert(upcoming(slot) > Date.now(), '该场次已开始');
-      if (!demo()) {
+      {
         const u = await one('SELECT phone FROM users WHERE id=?', s.user_id);
         assert(u?.phone === b.phone, '请先授权验证手机号', 403);
       }
@@ -312,7 +282,7 @@ export async function handle(req: Request) {
         slot.id,
         b.photoConsent ? 1 : 0,
         '2026-09-07',
-        uuid(),
+        `${Date.now()}-${uuid()}`,
         now(),
       ).run();
       await q(
@@ -325,7 +295,7 @@ export async function handle(req: Request) {
     }
     if (/^bookings\/[^/]+\/subscribe$/.test(path) && method === 'POST') {
       const user = await session(req);
-      assert(subscriptionReady() && !demo(), '订阅服务尚未配置', 503);
+      assert(subscriptionReady(), '订阅服务尚未配置', 503);
       const booking = await one(
         'SELECT id,status FROM bookings WHERE id=? AND user_id=?',
         path.split('/')[1],
@@ -418,7 +388,45 @@ export async function handle(req: Request) {
       });
     }
     if (path.startsWith('admin/')) {
-      await session(req, true);
+      const operator=await session(req, true);
+      if (path === 'admin/users' && method === 'GET') return response({currentId:operator.user_id,users:await all('SELECT id,username,enabled,created_at FROM admin_users ORDER BY created_at,id')});
+      if (path === 'admin/users' && method === 'POST') {
+        assert(/^[a-zA-Z0-9_-]{3,40}$/.test(b.username||''),'账号需为3至40位字母、数字、下划线或短横线');
+        assert(typeof b.password==='string' && b.password.length>=5 && b.password.length<=128,'密码需为5至128位');
+        assert(!await one('SELECT id FROM admin_users WHERE username=?',b.username),'账号已存在');
+        const salt=uuid();
+        await q('INSERT INTO admin_users(id,username,password_hash,salt,enabled,created_at) VALUES(?,?,?,?,1,?)',uuid(),b.username,await passwordHash(b.password,salt),salt,now()).run();
+        return response({ok:true});
+      }
+      if (path === 'admin/users/password' && method === 'POST') {
+        const target=await one('SELECT * FROM admin_users WHERE id=?',b.id);
+        assert(target,'账号不存在',404);
+        if(target.id===operator.user_id) assert(typeof b.oldPassword==='string' && b.oldPassword.length<=128 && await passwordHash(b.oldPassword,target.salt)===target.password_hash,'当前密码不正确');
+        assert(typeof b.password==='string' && b.password.length>=5 && b.password.length<=128,'密码需为5至128位');
+        const salt=uuid();
+        await db().batch([q('UPDATE admin_users SET password_hash=?,salt=? WHERE id=?',await passwordHash(b.password,salt),salt,target.id),q("DELETE FROM sessions WHERE user_id=? AND role='admin'",target.id)]);
+        return response({ok:true,relogin:target.id===operator.user_id});
+      }
+      if (path === 'admin/users/status' && method === 'POST') {
+        assert(b.id!==operator.user_id,'不能停用当前登录账号');
+        assert(typeof b.enabled==='boolean','状态无效');
+        await db().batch([q('UPDATE admin_users SET enabled=? WHERE id=?',b.enabled?1:0,b.id),q("DELETE FROM sessions WHERE user_id=? AND role='admin'",b.id)]);
+        return response({ok:true});
+      }
+      if (path === 'admin/legal') {
+        if (method === 'GET') {
+          const row = await one("SELECT payload FROM content_settings WHERE id='legal'");
+          return response(row ? JSON.parse(row.payload) : defaultLegal);
+        }
+        assert(method === 'POST', '不支持的操作', 405);
+        const value: Record<string,string> = {};
+        for (const key of Object.keys(legalTitles) as (keyof typeof legalTitles)[]) {
+          assert(typeof b[key] === 'string' && b[key].trim().length > 0 && b[key].length <= 20000, legalTitles[key] + '请填写1至20000字');
+          value[key] = b[key].trim();
+        }
+        await q("INSERT INTO content_settings(id,payload) VALUES('legal',?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", JSON.stringify(value)).run();
+        return response(value);
+      }
       if (path === 'admin/content') {
         if (method === 'GET') {
           const row = await one("SELECT payload FROM content_settings WHERE id='home'");
@@ -433,7 +441,7 @@ export async function handle(req: Request) {
           assert(typeof x.eventId === 'string' && x.eventId.trim().length <= 100, '关联活动格式错误');
           const image = text(x.image, 2048), title = text(x.title, 80), eventId = text(x.eventId, 100);
           assert(!x.enabled || image, '启用时必须填写图片地址');
-          if (image) { let u; try { u = new URL(image); } catch {} assert(u?.protocol === 'https:', '图片请使用HTTPS地址'); }
+          if (image) { let u; try { u = new URL(image); } catch {} assert(validImage(image), '图片请使用HTTPS地址'); }
           if (eventId) assert(await one('SELECT id FROM events WHERE id=?', eventId), '关联活动不存在');
           return { title, image, eventId, enabled: x.enabled };
         };
@@ -450,7 +458,7 @@ export async function handle(req: Request) {
         return response({ ok: true });
       }
       if (path === 'admin/overview') {
-        await seed();
+
         return response({
           experiences: await all('SELECT * FROM experiences ORDER BY rowid'),
           events: await all('SELECT * FROM events ORDER BY created_at DESC'),
@@ -459,10 +467,10 @@ export async function handle(req: Request) {
             `SELECT s.*,e.title,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status IN ('confirmed','checked')) AS booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status='waitlisted') AS waiting FROM slots s JOIN events e ON e.id=s.event_id ORDER BY s.date,s.time`,
           ),
           users: await all(
-            'SELECT u.id,u.name,u.phone,u.created_at,COUNT(b.id) AS bookings FROM users u LEFT JOIN bookings b ON b.user_id=u.id GROUP BY u.id ORDER BY u.created_at DESC',
+            'SELECT u.id,u.name,u.phone,u.created_at,(SELECT latest.gender FROM bookings latest WHERE latest.user_id=u.id ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1) AS gender,COUNT(b.id) AS bookings FROM users u LEFT JOIN bookings b ON b.user_id=u.id GROUP BY u.id ORDER BY u.created_at DESC',
           ),
           notifications: await all('SELECT * FROM notifications'),
-          demo: demo(),
+          demo: false,
         });
       }
       if (path === 'admin/experiences/delete' && method === 'POST') {
@@ -490,7 +498,7 @@ export async function handle(req: Request) {
       if (path === 'admin/events' && method === 'POST') {
         const media: Record<string,string> = {};
         if(b.contact_wechat !== undefined){assert(typeof b.contact_wechat==='string' && b.contact_wechat.trim().length<=100,'客服微信最多100字');media.contact_wechat=b.contact_wechat.trim();}
-        if(b.contact_qr !== undefined){assert(typeof b.contact_qr==='string' && b.contact_qr.trim().length<=2048,'客服二维码地址无效');const value=b.contact_qr.trim();if(value){let url;try{url=new URL(value)}catch{}assert(url?.protocol==='https:' && !url.username && !url.password,'客服二维码请填写HTTPS图片地址');}media.contact_qr=value;}
+        if(b.contact_qr !== undefined){assert(typeof b.contact_qr==='string' && b.contact_qr.trim().length<=2048,'客服二维码地址无效');const value=b.contact_qr.trim();if(value){let url;try{url=new URL(value)}catch{}assert(validImage(value),'客服二维码请填写HTTPS图片地址');}media.contact_qr=value;}
 
         if (b.notices !== undefined) {
           assert(typeof b.notices === 'string' && b.notices.trim().length <= 8000, '活动须知不能超过8000字');
@@ -507,7 +515,7 @@ export async function handle(req: Request) {
           assert(urls.length <= (field === 'detail_images' ? 20 : 1), '封面和顶部图各限1张，详情图最多20张');
           for (const url of urls) {
             let parsed; try { parsed = new URL(url); } catch {}
-            assert(url.length <= 2048 && parsed?.protocol === 'https:' && !parsed.username && !parsed.password, '请填写有效的HTTPS图片地址，每个地址不能超过2048字符');
+            assert(url.length <= 2048 && validImage(url), '请填写有效的HTTPS图片地址，每个地址不能超过2048字符');
           }
           media[field] = urls.join('\n');
         }
@@ -692,27 +700,25 @@ export async function handle(req: Request) {
         assert(code, '请输入入场码');
         const booking = await one(joined + ' WHERE b.code=?', code);
         assert(booking, '入场凭证不存在', 404);
+        if (booking.status === 'checked') return response({ ...booking, alreadyChecked: true });
         assert(
           booking.status === 'confirmed',
           booking.status === 'checked'
             ? '该凭证已核销，请勿重复操作'
             : '该预约尚未确认或已取消',
         );
-        if (!demo()) {
-          const start = upcoming(booking);
-          assert(
-            Date.now() >= start - 15 * 60000 &&
-              Date.now() <= start + 30 * 60000,
-            '请在预约开始前 15 分钟至开始后 30 分钟核销',
-          );
-        }
+        const checkedAt = now();
         const result = await q(
           "UPDATE bookings SET status='checked',checked_at=? WHERE id=? AND status='confirmed'",
-          now(),
+          checkedAt,
           booking.id,
         ).run();
-        assert(result.meta.changes === 1, '该凭证已核销');
-        return response({ ...booking, status: 'checked' });
+        if (result.meta.changes !== 1) {
+          const current = await one(joined + ' WHERE b.id=?', booking.id);
+          if (current?.status === 'checked') return response({ ...current, alreadyChecked: true });
+          throw new ApiError('预约状态已变化，请重新扫码', 409);
+        }
+        return response({ ...booking, status: 'checked', checked_at: checkedAt, alreadyChecked: false });
       }
     }
     throw new ApiError('接口不存在', 404);

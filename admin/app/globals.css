@@ -1025,3 +1025,26 @@ footer small {
 .activity-filter-toolbar .search-input,.activity-filter-toolbar .tabs button{height:38px;min-height:38px;box-sizing:border-box;padding:0 12px;line-height:20px}.activity-filter-toolbar .tabs{align-items:center}.activity-filter-toolbar .tabs button{display:inline-flex;align-items:center;justify-content:center}
 
 .booking-filter-toolbar>.search-input,.booking-filter-toolbar>button{height:38px;min-height:38px;box-sizing:border-box;padding:0 12px;line-height:20px}.booking-filter-toolbar>button{display:inline-flex;align-items:center;justify-content:center}
+
+/* Keep sidebar actions reachable when the viewport is short or narrow. */
+.sidebar { overflow: hidden; }
+.sidebar > .brand, .sidebar > .workspace, .sidebar > .nav-label, .sidebar > .side-bottom { flex-shrink: 0; }
+.sidebar > nav { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #d4dfd6 transparent; }
+.sidebar > nav > button { flex-shrink: 0; }
+.sidebar > .side-bottom { padding-top: 16px; }
+@media (max-height: 900px) and (min-width: 851px) {
+  .sidebar { padding-top: 22px; padding-bottom: 16px; }
+  .sidebar .workspace { margin-top: 20px; padding-block: 12px; }
+  .sidebar .nav-label { margin-top: 18px; }
+  .sidebar .side-note { display: none; }
+  .sidebar .profile { padding-top: 12px; margin-top: 8px; }
+}
+@media (max-width: 850px) {
+  .sidebar > .side-bottom { display: block; padding-top: 12px; }
+  .sidebar .side-note, .sidebar .profile { display: none; }
+  .sidebar .side-bottom > button { justify-content: center; padding: 16px 0; font-size: 0; gap: 0; }
+  .sidebar .side-bottom > button svg { width: 21px; height: 21px; flex-shrink: 0; }
+}
+@media (min-width: 851px) {
+  .sidebar > nav { margin-top: 24px; }
+}

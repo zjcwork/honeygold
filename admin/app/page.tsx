@@ -6,7 +6,7 @@ import {
   Ticket,
   Users,
   ScanLine,
-  Settings,
+  FileText,
   ArrowUpRight,
   Plus,
   Calendar,
@@ -24,10 +24,13 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { api, loginDemo, stateLabel, downloadCSV } from '@/lib/client';
+import { api, stateLabel, downloadCSV } from '@/lib/client';
 import Dashboard from './dashboard';
 import ContentManager from './content-manager';
+import LegalManager from './legal-manager';
+import AdminUsers from './admin-users';
 import EventImages from './event-images';
+import ImageUpload from './image-upload';
 import EventDetailEditor from './event-detail-editor';
 import ExperienceManager from './experience-manager';
 import SlotGroups from './slot-groups';
@@ -40,6 +43,8 @@ const nav = [
   ['现场核销', ScanLine],
   ['开屏与轮播', MonitorSmartphone],
   ['会员管理', Users],
+  ['条款维护', FileText],
+  ['用户管理', Users],
 ] as const;
 const initial = { events: [], bookings: [], slots: [], users: [], demo: true };
 export function Badge({ value }: any) {
@@ -64,7 +69,7 @@ export function BookingTable({ rows, onDetail }: any) {
       <table>
         <thead>
           <tr>
-            {['预约人', '活动 / 体验', '预约场次', '预约状态', '操作'].map(
+            {['预约人', '性别', '活动 / 体验', '预约场次', '预约码', '预约状态', '操作'].map(
               (x) => (
                 <th key={x}>{x}</th>
               ),
@@ -77,9 +82,10 @@ export function BookingTable({ rows, onDetail }: any) {
               <td>
                 {r.name}
                 <small>
-                  {r.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')}
+                  {r.phone || '未填写'}
                 </small>
               </td>
+              <td>{r.gender || '未填写'}</td>
               <td>
                 {r.title}
                 <small>{r.experience}</small>
@@ -88,6 +94,7 @@ export function BookingTable({ rows, onDetail }: any) {
                 {r.date}
                 <small>{r.time}</small>
               </td>
+              <td style={{ fontVariantNumeric: 'tabular-nums', userSelect: 'text' }}>{r.code ? `HG:${r.code}` : '—'}</td>
               <td>
                 <Badge value={r.status} />
               </td>
@@ -126,8 +133,7 @@ export default function Home() {
     [error, setError] = useState(''),
     [toast, setToast] = useState(''),
     [ready, setReady] = useState(false),
-    [needsLogin, setNeedsLogin] = useState(false),
-    [key, setKey] = useState('');
+    [needsLogin, setNeedsLogin] = useState(false);
   const refresh = useCallback(async () => {
     setData(await api('admin/overview'));
     setReady(true);
@@ -135,21 +141,20 @@ export default function Home() {
   }, []);
   useEffect(() => {
     const requestedView=new URLSearchParams(location.search).get('view');
-    setView(requestedView==='体验管理'?'活动管理':requestedView || '工作台');
+    const resolvedView = requestedView==='平台设置'?'条款维护':requestedView==='体验管理'?'活动管理':requestedView || '工作台';
+    setView(resolvedView);
+    if (requestedView === '平台设置') history.replaceState(null, '', '/?view=' + encodeURIComponent(resolvedView));
     (async () => {
       try {
-        const c = await api('config');
         if (!localStorage.getItem('hg_admin')) {
-          if (c.demo) await loginDemo('admin');
-          else {
-            setNeedsLogin(true);
-            return;
-          }
+          window.location.replace('/login');
+          return;
         }
         await refresh();
       } catch (e: any) {
         setError(e.message);
         setNeedsLogin(true);
+        if (!localStorage.getItem('hg_admin')) window.location.replace('/login');
       }
     })();
   }, [refresh]);
@@ -259,6 +264,7 @@ export default function Home() {
       ScanLine,
     ],
   ];
+  if (!ready && !needsLogin) return <main className="empty">正在验证登录状态…</main>;
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -266,13 +272,6 @@ export default function Home() {
           honey<span>gold</span>
           <small>蜜金 · 活动管理平台</small>
         </div>
-        <div className="workspace">
-          <span className="workspace-icon">H</span>
-          <div>
-            HONEY GOLD CLUB<small>品牌运营工作空间</small>
-          </div>
-        </div>
-        <div className="nav-label">运营管理</div>
         <nav>
           {nav.map(([name, Icon]) => (
             <button
@@ -296,10 +295,13 @@ export default function Home() {
               每一次相遇，都值得期待<small>让美好体验，从预约开始。</small>
             </p>
           </div>
-          <button onClick={() => navigate('平台设置')}>
-            <Settings size={18} />
-            平台设置
-          </button>
+          <button aria-label="退出登录" title="退出登录" disabled={busy} onClick={async () => {
+            setBusy(true);
+            try { await api('auth/logout', {}); } catch { /* Local logout still completes if the server is unavailable. */ }
+            localStorage.removeItem('hg_admin');
+            window.location.replace('/login');
+          }}><LogOut size={18} />退出登录</button>
+
           <div className="profile">
             <span>蜜</span>
             <div>
@@ -314,13 +316,7 @@ export default function Home() {
           <div>
             运营管理 <span>/</span> <b>{view}</b>
           </div>
-          <div className="top-right">
-            <a href="/mini">
-              <MonitorSmartphone size={16} />
-              小程序预览
-              <ArrowUpRight size={14} />
-            </a>
-          </div>
+
         </header>
         <div className="content">
           <div className="page-heading">
@@ -344,7 +340,8 @@ export default function Home() {
                       场次与名额: '安排体验场次，实时掌握预约与候补情况。',
                       会员管理: '记录每位嘉宾与蜜金的美好相遇。',
                       现场核销: '核验专属入场凭证，欢迎嘉宾登岛。',
-                      平台设置: '管理工作空间，查看服务接入状态。',
+                      条款维护: '维护使用条款、预约须知和隐私说明。',
+                      用户管理: '管理后台登录账号和密码。',
                     } as any
                   )[view]
                 }
@@ -370,34 +367,7 @@ export default function Home() {
             </div>
           )}
           {needsLogin ? (
-            <section className="panel scan-box">
-              <h2>登录运营后台</h2>
-              <p>请输入管理员密钥。</p>
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  try {
-                    const r = await api('auth/admin', { key });
-                    localStorage.setItem('hg_admin', r.token);
-                    await refresh();
-                    setError('');
-                  } catch (e: any) {
-                    setError(e.message);
-                  }
-                }}
-              >
-                <Input
-                  type="password"
-                  aria-label="管理员密钥"
-                  value={key}
-                  onChange={(e) => setKey(e.target.value)}
-                  required
-                />
-                <Button type="submit" className="primary">
-                  登录
-                </Button>
-              </form>
-            </section>
+            <section className="panel scan-box"><h2>无法加载工作空间</h2><p>{error}</p><a href="/login">返回登录页</a></section>
           ) : !ready ? (
             <div className="empty">正在读取工作空间…</div>
           ) : (
@@ -687,6 +657,7 @@ export default function Home() {
                         <thead>
                           <tr>
                             <th>会员</th>
+                            <th>性别</th>
                             <th>手机号</th>
                             <th>累计预约</th>
                             <th>加入时间</th>
@@ -702,11 +673,9 @@ export default function Home() {
                             .map((u: any) => (
                               <tr key={u.id}>
                                 <td>{u.name || '未填写'}</td>
+                                <td>{u.gender || '未填写'}</td>
                                 <td>
-                                  {u.phone?.replace(
-                                    /(\d{3})\d{4}(\d{4})/,
-                                    '$1****$2',
-                                  ) || '未授权'}
+                                  {u.phone || '未授权'}
                                 </td>
                                 <td>{u.bookings} 次</td>
                                 <td>{u.created_at.slice(0, 10)}</td>
@@ -738,7 +707,8 @@ export default function Home() {
                       );
                       if (r) {
                         setQuery('');
-                        setModal({ type: 'booking', value: r });
+                        setToast('');
+                        setModal({ type: 'booking', value: r, checkin: true });
                       }
                     }}
                   >
@@ -756,98 +726,8 @@ export default function Home() {
                   </form>
                 </section>
               )}
-              {view === '平台设置' && (
-                <div className="settings-grid">
-                  <section className="panel">
-                    <h2>工作空间</h2>
-                    <div className="info-line">
-                      <span>品牌</span>
-                      <b>HONEY GOLD · 蜜金</b>
-                    </div>
-                    <div className="info-line">
-                      <span>运行环境</span>
-                      <b>{data.demo ? '私有演示工作区' : '正式运营模式'}</b>
-                    </div>
-                    <div className="info-line">
-                      <span>修改 / 取消截止</span>
-                      <b>场次开始前 8 小时</b>
-                    </div>
-                    <div className="info-line">
-                      <span>候补机制</span>
-                      <b>按报名顺序自动递补</b>
-                    </div>
-                    <Button
-                      variant="outline"
-                      style={{ marginTop: 20 }}
-                      onClick={() => {
-                        localStorage.removeItem('hg_admin');
-                        setNeedsLogin(true);
-                        setReady(false);
-                      }}
-                    >
-                      <LogOut />
-                      退出登录
-                    </Button>
-                  </section>
-                  <section className="panel">
-                    <h2>微信小程序</h2>
-                    <div className="info-line">
-                      <span>用户端</span>
-                      <a href="/mini">打开预约预览 ↗</a>
-                    </div>
-                    <div className="info-line">
-                      <span>手机号授权</span>
-                      <b>{data.demo ? '演示填写' : '微信授权验证'}</b>
-                    </div>
-                    <div className="info-line">
-                      <span>订阅通知</span>
-                      <b>
-                        {
-                          (data.notifications || []).filter(
-                            (n: any) => n.status === 'sent',
-                          ).length
-                        }{' '}
-                        条已发送
-                      </b>
-                    </div>
-                    <div className="info-line">
-                      <span>待发送 / 失败</span>
-                      <b>
-                        {
-                          (data.notifications || []).filter(
-                            (n: any) => n.status === 'pending',
-                          ).length
-                        }{' '}
-                        /{' '}
-                        {
-                          (data.notifications || []).filter(
-                            (n: any) => n.status === 'failed',
-                          ).length
-                        }
-                      </b>
-                    </div>
-                    <Button
-                      variant="outline"
-                      disabled={busy || data.demo}
-                      onClick={() =>
-                        act('admin/notifications', {}, '已处理待发送与失败通知')
-                      }
-                    >
-                      发送待处理通知
-                    </Button>
-                    <p
-                      style={{
-                        lineHeight: 1.9,
-                        color: '#879487',
-                        fontSize: 13,
-                      }}
-                    >
-                      正式上线需配置品牌 AppID、AppSecret、合法 HTTPS
-                      域名与订阅消息模板。演示数据不代表实际活动报名。隐私条款与活动地址须由品牌确认。
-                    </p>
-                  </section>
-                </div>
-              )}
+              {view === '条款维护' && <LegalManager />}
+              {view === '用户管理' && <AdminUsers />}
             </>
           )}
           <footer>
@@ -871,7 +751,7 @@ export default function Home() {
                   ? '编辑场次'
                   : '添加体验场次'
                 : modal?.type === 'booking'
-                  ? '预约详情'
+                  ? modal.checkin ? (modal.value.alreadyChecked ? '该凭证已核销' : '核销成功') : '预约详情'
                   : modal?.title || ''}
           </DialogTitle>
           <DialogDescription>
@@ -918,7 +798,7 @@ export default function Home() {
               </label>
               <EventImages event={modal.value} />
               <label className="field">客服微信号<Input name="contact_wechat" defaultValue={modal.value.contact_wechat||''} maxLength={100} placeholder="报名成功后展示，可复制" /></label>
-              <label className="field">客服微信二维码<Input name="contact_qr" type="url" defaultValue={modal.value.contact_qr||''} maxLength={2048} placeholder="https://…" /><small>填写客服二维码图片地址，用于报名成功页。</small></label>
+              <ImageUpload name="contact_qr" label="客服微信二维码" initialValue={modal.value.contact_qr||''} />
               <EventDetailEditor event={modal.value} />
               <label className="field">活动须知
                 <textarea name="notices" defaultValue={modal.value.notices || ''} rows={6} maxLength={8000} placeholder="填写本活动的参与须知" />
@@ -995,11 +875,13 @@ export default function Home() {
                 ['预约人', modal.value.name],
                 ['手机号', modal.value.phone],
                 ['活动', modal.value.title],
-                ['体验', modal.value.experience],
+                ['活动地点', modal.value.location],
+                ['预约码', modal.value.code ? `HG:${modal.value.code}` : '—'],
+                ['体验', modal.value.experience || '无需选择体验'],
                 ['时间', modal.value.date + ' ' + modal.value.time],
                 ['状态', stateLabel(modal.value.status)],
                 ['拍摄授权', modal.value.photo_consent ? '已同意' : '未同意'],
-                ['核销时间', modal.value.checked_at || '未核销'],
+                ['核销时间', modal.value.checked_at ? new Date(modal.value.checked_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '未核销'],
               ].map(([a, b]) => (
                 <div className="info-line" key={a}>
                   <span>{a}</span>

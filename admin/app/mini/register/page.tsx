@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { ChevronLeft, CalendarDays, MapPin } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { api, loginDemo } from '@/lib/client';
+import { api } from '@/lib/client';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import '../mini.css';
 import './register.css';
@@ -47,8 +47,7 @@ export default function Register() {
     setError('');
     try {
       if (!localStorage.getItem('hg_user')) {
-        if (!isDemo) throw Error('请使用微信小程序完成手机号授权后预约');
-        await loginDemo('user');
+        throw Error('请使用微信小程序完成手机号授权后预约');
       }
       const b = await api(
         'bookings',
@@ -173,9 +172,9 @@ export default function Register() {
                   />
                   <span>
                     我已阅读并同意
-                    <a href="/mini/terms" target="_blank" rel="noreferrer">
-                      使用条款、预约须知和隐私说明
-                    </a>
+                    <a href="/mini/terms?type=terms" target="_blank" rel="noreferrer">使用条款</a>、
+                    <a href="/mini/terms?type=booking" target="_blank" rel="noreferrer">预约须知</a>和
+                    <a href="/mini/terms?type=privacy" target="_blank" rel="noreferrer">隐私说明</a>
                   </span>
                 </label>
                 <label className="consent">
