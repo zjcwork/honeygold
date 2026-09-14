@@ -23,7 +23,7 @@ export async function flushNotices() {
   const list = (
     await db
       .prepare(
-        `SELECT n.booking_id,b.status AS booking_status,b.name,b.phone,b.code,e.title,s.date,s.time,s.experience,u.openid FROM notifications n JOIN bookings b ON b.id=n.booking_id JOIN users u ON u.id=b.user_id JOIN events e ON e.id=b.event_id JOIN slots s ON s.id=b.slot_id WHERE n.status='pending' AND b.status IN ('confirmed','cancelled') LIMIT 20`,
+        `SELECT n.booking_id,b.status AS booking_status,b.name,b.phone,c.code,e.title,s.date,s.time,COALESCE((SELECT group_concat(x.name,'、') FROM experiences x WHERE x.id IN (SELECT value FROM json_each(b.experience_ids))),(SELECT name FROM participation_modes WHERE id=s.mode_id)) AS experience,u.openid FROM notifications n JOIN bookings b ON b.id=n.booking_id JOIN booking_credentials c ON c.group_key=COALESCE(b.booking_group_id,b.id) JOIN users u ON u.id=b.user_id JOIN events e ON e.id=b.event_id JOIN slots s ON s.id=b.slot_id WHERE n.status='pending' AND b.status IN ('confirmed','cancelled') LIMIT 20`,
       )
       .all()
   ).results as any[];

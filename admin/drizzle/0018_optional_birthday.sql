@@ -1,0 +1,1 @@
+ALTER TABLE bookings ADD COLUMN birthday TEXT NOT NULL DEFAULT '';

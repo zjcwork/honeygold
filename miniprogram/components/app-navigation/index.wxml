@@ -1,2 +1,2 @@
-<view style="height:{{totalHeight}}px" />
-<view class="navigation" style="padding-top:{{statusHeight}}px"><view class="navigation-row" style="height:{{barHeight}}px"><button wx:if="{{showBack}}" class="navigation-back" aria-label="返回" bindtap="back"><view class="chevron" /></button><view class="navigation-title" style="left:{{titleInset}}px;right:{{titleInset}}px">{{title}}</view></view></view>
+<view wx:if="{{!overlay}}" style="height:{{totalHeight}}px" />
+<view class="navigation {{overlay?'navigation-overlay':''}}" style="padding-top:{{statusHeight}}px"><view class="navigation-row" style="height:{{barHeight}}px"><button wx:if="{{showBack}}" class="navigation-back" aria-label="返回" bindtap="back"><image class="navigation-back-icon" src="/assets/ui/back.png" mode="aspectFit" /></button><view class="navigation-title" style="left:{{titleInset}}px;right:{{titleInset}}px">{{title}}</view></view></view>

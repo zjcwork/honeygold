@@ -9,7 +9,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BookingTable, Badge } from './page';
+import { Badge } from './page';
 export default function Dashboard({ data, navigate }: any) {
   const events = data.events.filter((e:any)=>e.status === 'published');
   const [index,setIndex]=useState(0),[hovered,setHovered]=useState(false),[focused,setFocused]=useState(false),[paused,setPaused]=useState(false);
@@ -30,11 +30,7 @@ export default function Dashboard({ data, navigate }: any) {
         </div>
         {event ? (
           <div className="feature-body" role="group" aria-roledescription="幻灯片" aria-label={`${activeIndex+1} / ${count}：${event.title}`}>
-            {event.cover_image ? <img className="event-poster dashboard-event-cover" src={event.cover_image} alt={event.title} /> : <div className="event-poster">
-              <div>{event.subtitle}</div>
-              <strong>{event.title}</strong>
-              <small>{event.start_date} – {event.end_date}</small>
-            </div>}
+            {event.cover_image ? <img className="event-poster dashboard-event-cover" src={event.cover_image} alt={event.title} /> : <div className="event-poster" style={{background:'#E7E7E7'}} aria-label="暂无活动图片"/>}
             <div className="feature-copy">
               <div style={{ position: 'absolute', right: 0, top: 0 }}>
                 <Badge value={event.status} />
@@ -49,7 +45,7 @@ export default function Dashboard({ data, navigate }: any) {
               <div className="event-meta">⌖ {event.location}</div>
               <div className="feature-footer">
                 <span>
-                  {(data.experiences || []).filter((x:any)=>x.event_id===event.id && x.enabled).length} 种已启用体验
+                  {(data.participation_modes||[]).filter((m:any)=>m.event_id===event.id&&m.enabled&&m.kind==='experiences').reduce((n:number,m:any)=>n+m.items.filter((x:any)=>x.enabled).length,0)} 种已启用体验
                 </span>
                 <Button variant="outline" onClick={() => navigate('活动管理')}>
                   管理活动
@@ -77,7 +73,7 @@ export default function Dashboard({ data, navigate }: any) {
         {[
           [ScanLine, '现场核销', '扫描入场凭证，轻松签到'],
           [Calendar, '场次管理', '安排时间，掌握体验名额'],
-          [Ticket, '预约名单', '查看报名与候补记录'],
+          [Ticket, '预约名单', '查看活动报名记录'],
         ].map(([Icon, title, sub]: any) => (
           <button
             key={title}
@@ -102,40 +98,7 @@ export default function Dashboard({ data, navigate }: any) {
           </button>
         ))}
       </section>
-      <section className="panel reservations">
-        <div className="panel-title">
-          <h2>最新预约</h2>
-          <Button variant="ghost" onClick={() => navigate('预约管理')}>
-            查看全部
-            <ArrowRight />
-          </Button>
-        </div>
-        <BookingTable rows={data.bookings.slice(0, 5)} />
-      </section>
-      <section className="panel notice">
-        <div className="panel-title">
-          <h2>预约须知</h2>
-          <span>✦</span>
-        </div>
-        <div>
-          <b>01</b>
-          <p>
-            体验限约一种<small>每位嘉宾每场活动仅保留一条有效预约。</small>
-          </p>
-        </div>
-        <div>
-          <b>02</b>
-          <p>
-            提前 8 小时修改<small>支持改签和取消，释放的名额自动递补。</small>
-          </p>
-        </div>
-        <div>
-          <b>03</b>
-          <p>
-            提前 15 分钟到场<small>出示专属入场凭证，完成现场核销。</small>
-          </p>
-        </div>
-      </section>
+
     </div>
   );
 }

@@ -36,6 +36,7 @@ const localBindingConfig = {
 };
 
 export default defineConfig(async ({ command, mode }) => {
+  const nodeDeployment = process.env.HONEYGOLD_RUNTIME === 'node';
   const localEnv = loadEnv(mode, process.cwd(), '');
   for (const [key, value] of Object.entries(localEnv))
     process.env[key] ??= value;
@@ -50,7 +51,7 @@ export default defineConfig(async ({ command, mode }) => {
 
   return {
     resolve:
-      command === 'serve'
+      (command === 'serve' || nodeDeployment)
         ? {
             alias: {
               'cloudflare:workers': fileURLToPath(
@@ -68,15 +69,15 @@ export default defineConfig(async ({ command, mode }) => {
         name: 'local-worker-env',
         enforce: 'pre',
         resolveId(source: string) {
-          if (command === 'serve' && source === 'cloudflare:workers')
+          if ((command === 'serve' || nodeDeployment) && source === 'cloudflare:workers')
             return fileURLToPath(
               new URL('./lib/local-env.ts', import.meta.url),
             );
         },
       },
       vinext(),
-      sites(),
-      command === 'build' &&
+      !nodeDeployment && sites(),
+      command === 'build' && !nodeDeployment &&
         cloudflare({
           viteEnvironment: { name: 'rsc', childEnvironments: ['ssr'] },
           config: localBindingConfig,

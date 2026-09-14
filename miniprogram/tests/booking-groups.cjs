@@ -1,0 +1,4 @@
+const assert=require('assert'),{groupBookings}=require('../utils/booking-groups');
+const rows=[{id:'1',user_id:'u',event_id:'e',booking_group_id:'g',status:'confirmed',label:'预约成功'},{id:'2',user_id:'u',event_id:'e',booking_group_id:'g',status:'waitlisted',label:'候补中'},{id:'3',user_id:'u',event_id:'e',booking_group_id:'h',status:'cancelled'},{id:'legacy',user_id:'u',event_id:'e'}];
+const groups=groupBookings(rows);assert.equal(groups.length,3);assert.equal(groups[0].items.length,2);assert.equal(groups[0].label,'多场次预约');assert.equal(groups.filter(g=>g.items.some(x=>x.status==='waitlisted'))[0].items.length,2);assert.equal(groupBookings(rows.filter(x=>x.status!=='cancelled')).length,2);
+console.log('PASS: two experiences count as one booking; mixed statuses preserved; separate submissions and legacy records remain separate');

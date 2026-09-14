@@ -1,5 +1,5 @@
 import { defaultLegal, legalTitles } from './legal';
-import {generateSlotTimes} from './slot-times';
+import {generateSlotTimes,validateSlotTime} from './slot-times';
 import { flushNotices, subscriptionReady } from './notifications';
 import QRCode from 'qrcode';
 import { env } from 'cloudflare:workers';
@@ -41,14 +41,49 @@ const assert = (condition: any, message: string, status = 400) => {
 };
 const text = (v: any, max = 200) =>
   typeof v === 'string' && v.trim().length <= max ? v.trim() : '';
-const experienceNames = [
-  '鎏金美甲 Beauty Bar',
-  '微醺特调 Gold Bar',
-  '仅登岛参观',
-];
 async function validSlotExperience(eventId:string,experience:unknown) {
-  if (experience === '') return !(await one('SELECT id FROM experiences WHERE event_id=? LIMIT 1',eventId));
-  return typeof experience === 'string' && !!(await one('SELECT id FROM experiences WHERE event_id=? AND name=? AND enabled=1',eventId,experience));
+ return typeof experience==='string' && !!(await one('SELECT x.id FROM experiences x JOIN participation_modes m ON m.id=x.mode_id WHERE x.event_id=? AND x.name=? AND x.enabled=1 AND m.enabled=1',eventId,experience));
+}
+async function participationModes(eventId?:string) {
+ const modes=await all('SELECT * FROM participation_modes'+(eventId?' WHERE event_id=?':'')+' ORDER BY position,id',...(eventId?[eventId]:[]));
+ const items=await all('SELECT * FROM experiences'+(eventId?' WHERE event_id=?':'')+' ORDER BY rowid',...(eventId?[eventId]:[]));
+ return modes.map(m=>({...m,items:items.filter(x=>x.mode_id===m.id)}));
+}
+async function modeStatements(eventId:string,input:any) {
+ assert(Array.isArray(input)&&input.length>0&&input.length<=10,'请新增1至10种参与方式');
+ const previous=await participationModes(eventId), oldItems=previous.flatMap(m=>m.items);
+ const usedModes=new Set(),usedItems=new Set(),usedNames=new Set(),usedModeNames=new Set();
+ const stmts: D1PreparedStatement[]=[];
+ for(let position=0;position<input.length;position++){
+  const item=input[position],name=text(item.name,60),kind=item.kind;
+  assert(name&&['direct','experiences'].includes(kind)&&!usedModeNames.has(name),'参与方式名称不能为空或重复（最多60字）');usedModeNames.add(name);
+  const old=item.id?previous.find(m=>m.id===item.id):null;
+  assert(!item.id||old,'参与方式不存在或已更新，请刷新');
+  const id=old?.id||uuid();assert(!usedModes.has(id),'参与方式重复');usedModes.add(id);
+  if(old&&old.kind!==kind)assert(!(await one('SELECT id FROM slots WHERE mode_id=? LIMIT 1',id)),'已有场次的参与方式不能更改类型');
+  stmts.push(old?q('UPDATE participation_modes SET name=?,kind=?,enabled=?,position=? WHERE id=?',name,kind,item.enabled===false||item.enabled===0?0:1,position,id):q('INSERT INTO participation_modes VALUES(?,?,?,?,?,?)',id,eventId,name,kind,item.enabled===false||item.enabled===0?0:1,position));
+  const entries=kind==='direct'?(old?.kind==='direct'?old.items.map((x:any)=>({...x,name:x.name})): [{name}]):item.items;
+  assert(Array.isArray(entries)&&entries.length>0&&entries.length<=20,'每种体验方式请新增1至20个体验项目');
+  for(const entry of entries){
+   const prior=entry.id?oldItems.find(x=>x.id===entry.id):null;
+   assert(!entry.id||prior,'体验不存在或已更新，请刷新');
+   const eid=prior?.id||uuid(),ename=kind==='direct'&&prior?prior.name:text(entry.name,80);
+   assert((ename||kind==='direct')&&!usedNames.has(ename)&&!usedItems.has(eid),'体验名称不能为空或重复（最多80字，同一活动内不能重名）');
+   assert(!prior||prior.mode_id===id,'请勿移动已有体验；可新建体验');
+   assert(!oldItems.some(x=>x.name===ename&&x.id!==eid),'此体验名称已被使用');
+   usedNames.add(ename);usedItems.add(eid);
+   if(prior){stmts.push(q('UPDATE experiences SET name=?,enabled=? WHERE id=?',ename,entry.enabled===false||entry.enabled===0?0:1,eid));}
+   else stmts.push(q('INSERT INTO experiences(id,event_id,name,enabled,mode_id) VALUES(?,?,?,?,?)',eid,eventId,ename,1,id));
+  }
+ }
+ assert(input.some((m:any)=>m.enabled!==false&&m.enabled!==0),'至少启用一种参与方式');
+ for(const old of oldItems)if(!usedItems.has(old.id)){
+  assert(!(await one('SELECT id FROM slots WHERE experience_id=? LIMIT 1',old.id)),'该体验已有场次，不能删除，可停用');
+  assert(!(await one('SELECT id FROM bookings WHERE event_id=? AND EXISTS(SELECT 1 FROM json_each(experience_ids) WHERE value=?) LIMIT 1',eventId,old.id)),'已有预约选择此体验，不能删除，可停用');
+  stmts.push(q('DELETE FROM experiences WHERE id=?',old.id));
+ }
+ for(const old of previous)if(!usedModes.has(old.id)){assert(!(await one('SELECT id FROM slots WHERE mode_id=? LIMIT 1',old.id)),'该参与方式已有场次，不能删除，可停用');stmts.push(q('DELETE FROM participation_modes WHERE id=?',old.id));}
+ return stmts;
 }
 async function session(req: Request, admin = false) {
   const token = req.headers.get('authorization')?.replace(/^Bearer /, '') || '';
@@ -99,15 +134,9 @@ async function wxToken() {
   assert(r.access_token, '微信服务暂不可用', 502);
   return r.access_token;
 }
-const joined = `SELECT b.*,e.title,e.subtitle,e.description,e.notices,e.contact_wechat,e.contact_qr,e.location,s.experience,s.date,s.time FROM bookings b JOIN events e ON b.event_id=e.id JOIN slots s ON b.slot_id=s.id`;
-const upcoming = (s: any) => new Date(`${s.date}T${s.time}:00+08:00`).getTime();
-const promote = (slotId: string) =>
-  q(
-    `UPDATE bookings SET status='confirmed' WHERE id=(SELECT id FROM bookings WHERE slot_id=? AND status='waitlisted' ORDER BY created_at,id LIMIT 1) AND (SELECT COUNT(*) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked'))<(SELECT capacity FROM slots WHERE id=?)`,
-    slotId,
-    slotId,
-    slotId,
-  );
+const joined = `SELECT b.*,c.code AS code,e.title,e.subtitle,e.hero_image,e.cover_image,e.summary,e.description,e.notices,e.contact_wechat,e.contact_qr,e.location,s.date,s.time,m.id AS participation_mode_id,m.kind AS participation_kind,m.name AS participation_name,m.name AS experience,(SELECT json_group_array(json_object('id',x.id,'name',x.name)) FROM json_each(b.experience_ids) selected JOIN experiences x ON x.id=selected.value) AS experience_items,CASE WHEN m.kind='direct' THEN m.name ELSE COALESCE((SELECT group_concat(x.name,'、') FROM experiences x WHERE x.id IN (SELECT value FROM json_each(b.experience_ids))),m.name) END AS experience_label FROM (SELECT * FROM bookings WHERE superseded=0) b JOIN booking_credentials c ON c.group_key=COALESCE(b.booking_group_id,b.id) JOIN events e ON b.event_id=e.id JOIN slots s ON b.slot_id=s.id JOIN participation_modes m ON m.id=s.mode_id`;
+const upcoming = (s: any) => new Date(`${s.date}T${s.time.split('-')[0]}:00+08:00`).getTime();
+
 export async function handle(req: Request) {
   try {
     const path = new URL(req.url).pathname.replace(/^\/api\//, '');
@@ -237,10 +266,12 @@ export async function handle(req: Request) {
       );
       assert(e, '活动不存在', 404);
       const slots = await all(
-        `SELECT s.*,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status IN ('confirmed','checked')) AS booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status='waitlisted') AS waiting FROM slots s WHERE event_id=? ORDER BY date,time`,
+        `SELECT s.*,(SELECT COUNT(DISTINCT user_id) FROM bookings b WHERE b.slot_id=s.id AND b.status IN ('confirmed','checked')) AS booked,0 AS waiting FROM slots s WHERE event_id=? ORDER BY date,time`,
         e.id,
       );
-      return response({ ...e, slots });
+      const modes=await participationModes(e.id);
+      const available=modes.filter(m=>m.enabled).map(m=>({...m,items:m.items.filter((x:any)=>x.enabled)}));
+      return response({...e,participation_modes:available,slots:slots.flatMap(slot=>{const mode=available.find(m=>m.id===slot.mode_id);return mode&&(mode.kind==='direct'||slot.experience_id)?[{...slot,mode_id:mode.id,mode_kind:mode.kind,mode_name:mode.name,experience_label:mode.name}]:[]})});
     }
     if (path === 'bookings' && method === 'GET') {
       const s = await session(req);
@@ -256,42 +287,43 @@ export async function handle(req: Request) {
       assert(s.role === 'user', '请使用用户身份预约');
       assert(text(b.name, 40), '请填写真实姓名');
       assert(/^1[3-9]\d{9}$/.test(b.phone), '请填写有效手机号');
-      assert(['女', '男', '不便透露'].includes(b.gender), '请选择性别');
+      const gender=b.gender??'',birthday=b.birthday??'';
+      assert(['女','男','不便透露'].includes(gender),'请选择性别');
+      assert(typeof birthday==='string'&&birthday.length>0,'请选择生日');
+      assert(typeof birthday==='string'&&(/^\d{4}-\d{2}-\d{2}$/.test(birthday)&&Number.isFinite(Date.parse(birthday+'T00:00:00Z'))&&new Date(birthday+'T00:00:00Z').toISOString().slice(0,10)===birthday&&birthday<=(new Date(Date.now()+8*3600000).toISOString().slice(0,10))),'请填写有效生日，不能晚于今天');
       assert(b.terms === true, '请阅读并同意预约条款');
-      const slot = await one(
-        'SELECT s.*,e.status FROM slots s JOIN events e ON e.id=s.event_id WHERE s.id=?',
-        b.slotId,
-      );
-      assert(slot && slot.status === 'published', '该场次未开放预约');
-      assert(upcoming(slot) > Date.now(), '该场次已开始');
-      {
-        const u = await one('SELECT phone FROM users WHERE id=?', s.user_id);
-        assert(u?.phone === b.phone, '请先授权验证手机号', 403);
+      const selections=b.selections??[{slotId:b.slotId||(Array.isArray(b.slotIds)&&b.slotIds.length===1?b.slotIds[0]:null),experienceIds:b.experienceIds||[]}];
+      assert(Array.isArray(selections)&&selections.length>0&&selections.length<=20,'请选择体验和时间');
+      const groups=new Map<string,{slot:any;experienceIds:string[]}>();
+      const seen=new Set<string>();let first:any;
+      for(const selection of selections){
+        assert(selection&&typeof selection.slotId==='string','请选择场次');
+        const slot=await one('SELECT s.*,e.status,m.kind,m.enabled FROM slots s JOIN events e ON e.id=s.event_id JOIN participation_modes m ON m.id=s.mode_id WHERE s.id=?',selection.slotId);
+        assert(slot&&slot.status==='published'&&slot.enabled,'该场次未开放预约');
+        assert(upcoming(slot)>Date.now(),'该场次已开始');
+        if(!first)first=slot;
+        assert(slot.event_id===first.event_id&&slot.mode_id===first.mode_id&&slot.date===first.date,'请选择同一参与方式、同一日期的场次');
+        const ids=selection.experienceIds;
+        assert(Array.isArray(ids)&&ids.length<=20&&ids.every((id:any)=>typeof id==='string'),'体验选择无效');
+        assert(slot.kind==='experiences'?ids.length>0:ids.length===0&&selections.length===1,'请按参与方式选择体验');
+        for(const id of ids){
+          assert(slot.experience_id===id,'该场次不属于所选体验');
+          assert(!seen.has(id),'每个体验只能选择一个时间');seen.add(id);
+          assert(await one('SELECT id FROM experiences WHERE id=? AND mode_id=? AND enabled=1',id,slot.mode_id),'请选择本参与方式已启用的体验');
+        }
+        assert(seen.size<=20,'最多选择20个体验');
+        const group=groups.get(slot.id)||{slot,experienceIds:[]};group.experienceIds.push(...ids);groups.set(slot.id,group);
       }
-      const id = uuid();
-      await q(
-        `INSERT INTO bookings(id,event_id,slot_id,user_id,name,phone,gender,status,photo_consent,terms_version,code,created_at) VALUES(?,?,?,?,?,?,?,CASE WHEN (SELECT COUNT(*) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked')) < (SELECT capacity FROM slots WHERE id=?) THEN 'confirmed' ELSE 'waitlisted' END,?,?,?,?)`,
-        id,
-        slot.event_id,
-        slot.id,
-        s.user_id,
-        text(b.name, 40),
-        b.phone,
-        b.gender,
-        slot.id,
-        slot.id,
-        b.photoConsent ? 1 : 0,
-        '2026-09-07',
-        `${Date.now()}-${uuid()}`,
-        now(),
-      ).run();
-      await q(
-        'UPDATE users SET name=?,phone=? WHERE id=?',
-        text(b.name, 40),
-        b.phone,
-        s.user_id,
-      ).run();
-      return response(await one(joined + ' WHERE b.id=?', id));
+      const u=await one('SELECT phone FROM users WHERE id=?',s.user_id);assert(u?.phone===b.phone,'请先授权验证手机号',403);
+      assert(!(await one("SELECT id FROM bookings WHERE event_id=? AND user_id=? AND status!='cancelled' LIMIT 1",first.event_id,s.user_id)),'该活动已有预约，请先查看或取消已有预约',409);
+      const groupId=uuid(),ids:string[]=[];
+      const statements=[...groups.values()].map(({slot,experienceIds})=>{
+        const id=uuid();ids.push(id);
+        return q(`INSERT INTO bookings(id,event_id,slot_id,user_id,name,phone,gender,status,photo_consent,terms_version,code,created_at,experience_ids,booking_group_id,birthday) VALUES(?,?,?,?,?,?,?,'confirmed',?,?,?,?,?,?,?)`,id,slot.event_id,slot.id,s.user_id,text(b.name,40),b.phone,gender,b.photoConsent?1:0,'2026-09-10',`${Date.now()}-${uuid()}`,now(),JSON.stringify(experienceIds),groupId,birthday);
+      });
+      await db().batch([...statements,q('UPDATE users SET name=?,phone=? WHERE id=?',text(b.name,40),b.phone,s.user_id)]);
+      const reservations=await Promise.all(ids.map(id=>one(joined+' WHERE b.id=?',id)));
+      return response({...reservations[0],reservations});
     }
     if (/^bookings\/[^/]+\/subscribe$/.test(path) && method === 'POST') {
       const user = await session(req);
@@ -302,7 +334,7 @@ export async function handle(req: Request) {
         user.user_id,
       );
       assert(
-        booking && ['confirmed', 'waitlisted'].includes(booking.status),
+        booking && ['confirmed'].includes(booking.status),
         '此预约不可订阅',
       );
       await q(
@@ -326,7 +358,7 @@ export async function handle(req: Request) {
       );
       assert(booking, '预约不存在', 404);
       assert(
-        ['confirmed', 'waitlisted'].includes(booking.status),
+        ['confirmed'].includes(booking.status),
         '此预约不能修改',
       );
       assert(
@@ -334,36 +366,44 @@ export async function handle(req: Request) {
         '距预约时间不足 8 小时，无法修改或取消',
       );
       if (action === 'cancel') {
-        await db().batch([
-          q(
-            "UPDATE bookings SET status='cancelled' WHERE id=? AND status IN ('confirmed','waitlisted')",
-            id,
-          ),
-          promote(booking.slot_id),
+        const related=booking.booking_group_id
+          ?await all(joined+' WHERE b.booking_group_id=? AND b.user_id=? AND b.event_id=?',booking.booking_group_id,s.user_id,booking.event_id)
+          :[booking];
+        assert(!related.some((item:any)=>item.status==='checked'),'本次活动已有体验核销，无法整单取消');
+        const active=related.filter((item:any)=>['confirmed'].includes(item.status));
+        assert(active.every((item:any)=>upcoming(item)-Date.now()>=8*3600000),'本次活动有场次距开始不足 8 小时，无法整单取消');
+        const ids=related.map((item:any)=>item.id),placeholders=ids.map(()=>'?').join(',');
+        const result=await db().batch([
+          q(`UPDATE bookings SET status='cancelled' WHERE id IN (${placeholders}) AND status IN ('confirmed') AND NOT EXISTS(SELECT 1 FROM bookings WHERE id IN (${placeholders}) AND status='checked')`,...ids,...ids),
         ]);
+        assert(result[0].meta.changes===active.length,'预约状态已变化，请刷新后重试',409);
       } else {
-        const target = await one(
-          'SELECT s.*,e.status FROM slots s JOIN events e ON e.id=s.event_id WHERE s.id=? AND s.event_id=?',
-          b.slotId,
-          booking.event_id,
-        );
-        assert(
-          target &&
-            target.status === 'published' &&
-            upcoming(target) - Date.now() >= 8 * 3600000,
-          '新场次须距当前至少 8 小时',
-        );
-        assert(target.id !== booking.slot_id, '请选择其他场次');
-        await db().batch([
-          q(
-            `UPDATE bookings SET slot_id=?,status=CASE WHEN (SELECT COUNT(*) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked')) < (SELECT capacity FROM slots WHERE id=?) THEN 'confirmed' ELSE 'waitlisted' END WHERE id=? AND status IN ('confirmed','waitlisted')`,
-            target.id,
-            target.id,
-            target.id,
-            id,
-          ),
-          promote(booking.slot_id),
-        ]);
+        const related=booking.booking_group_id?await all(joined+' WHERE b.booking_group_id=? AND b.user_id=? AND b.event_id=?',booking.booking_group_id,s.user_id,booking.event_id):[booking];
+        assert(related.every((item:any)=>['confirmed'].includes(item.status)&&upcoming(item)-Date.now()>=8*3600000),'本次预约有场次已核销、取消或距开始不足 8 小时，无法整单修改');
+        const selections=b.selections;
+        assert(Array.isArray(selections)&&selections.length>0&&selections.length<=20,'请提交整条预约的体验和时间');
+        const expected=new Set<string>(related.flatMap((item:any)=>JSON.parse(item.experience_ids||'[]'))),seen=new Set<string>();
+        const groups=new Map<string,{slot:any;experienceIds:string[]}>();let date='';
+        for(const selection of selections){
+          assert(selection&&typeof selection.slotId==='string'&&Array.isArray(selection.experienceIds),'场次选择无效');
+          const slot=await one('SELECT s.*,e.status,m.enabled FROM slots s JOIN events e ON e.id=s.event_id JOIN participation_modes m ON m.id=s.mode_id WHERE s.id=?',selection.slotId);
+          assert(slot&&slot.event_id===booking.event_id&&slot.mode_id===booking.participation_mode_id&&slot.enabled&&slot.status==='published'&&upcoming(slot)-Date.now()>=8*3600000,'请选择同一参与方式下距当前至少 8 小时的场次');
+          assert(!date||date===slot.date,'所有体验请选择同一天');date=slot.date;
+          assert(expected.size?selection.experienceIds.length>0:selections.length===1&&selection.experienceIds.length===0,'体验选择无效');
+          for(const experienceId of selection.experienceIds){assert(slot.experience_id===experienceId,'该场次不属于所选体验');assert(expected.has(experienceId)&&!seen.has(experienceId),'请完整提交原预约的所有体验，不能重复');seen.add(experienceId)}
+          const group=groups.get(slot.id)||{slot,experienceIds:[]};group.experienceIds.push(...selection.experienceIds);groups.set(slot.id,group);
+        }
+        assert(seen.size===expected.size,'请为原预约的所有体验选择时间');
+        assert([...groups.values()].some(g=>!related.some((old:any)=>old.slot_id===g.slot.id&&JSON.stringify(JSON.parse(old.experience_ids).sort())===JSON.stringify([...g.experienceIds].sort())))||groups.size!==related.length,'请选择新的场次');
+        const oldIds=related.map((item:any)=>item.id),marks=oldIds.map(()=>'?').join(','),groupId=booking.booking_group_id||uuid(),newIds:string[]=[];
+        // The guard causes the whole transaction to roll back if a concurrent check-in or revision changed a source row.
+        const statements=[q(`INSERT INTO bookings(id) SELECT ? WHERE (SELECT COUNT(*) FROM bookings WHERE id IN (${marks}) AND status IN ('confirmed') AND superseded=0)!=?`,booking.id,...oldIds,oldIds.length),q(`UPDATE bookings SET status='cancelled',superseded=1 WHERE id IN (${marks})`,...oldIds)];
+        for(const {slot,experienceIds} of groups.values()){
+          const newId=uuid();newIds.push(newId);
+          statements.push(q(`INSERT INTO bookings(id,event_id,slot_id,user_id,name,phone,gender,status,photo_consent,terms_version,code,created_at,experience_ids,booking_group_id,birthday) VALUES(?,?,?,?,?,?,?,'confirmed',?,?,?,?,?,?,?)`,newId,booking.event_id,slot.id,s.user_id,booking.name,booking.phone,booking.gender,booking.photo_consent,booking.terms_version,`${Date.now()}-${uuid()}`,booking.created_at,JSON.stringify(experienceIds),groupId,booking.birthday||''));
+        }
+        await db().batch(statements);await flushNotices();
+        return response(await one(joined+' WHERE b.id=?',newIds[0]));
       }
       await flushNotices();
       return response(await one(joined + ' WHERE b.id=?', id));
@@ -460,23 +500,29 @@ export async function handle(req: Request) {
       if (path === 'admin/overview') {
 
         return response({
+          participation_modes: await participationModes(),
           experiences: await all('SELECT * FROM experiences ORDER BY rowid'),
           events: await all('SELECT * FROM events ORDER BY created_at DESC'),
           bookings: await all(joined + ' ORDER BY b.created_at DESC'),
           slots: await all(
-            `SELECT s.*,e.title,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status IN ('confirmed','checked')) AS booked,(SELECT COUNT(*) FROM bookings b WHERE b.slot_id=s.id AND b.status='waitlisted') AS waiting FROM slots s JOIN events e ON e.id=s.event_id ORDER BY s.date,s.time`,
+            `SELECT s.*,e.title,(SELECT COUNT(DISTINCT user_id) FROM bookings b WHERE b.slot_id=s.id AND b.status IN ('confirmed','checked')) AS booked,0 AS waiting FROM slots s JOIN events e ON e.id=s.event_id ORDER BY s.date,s.time`,
           ),
           users: await all(
-            'SELECT u.id,u.name,u.phone,u.created_at,(SELECT latest.gender FROM bookings latest WHERE latest.user_id=u.id ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1) AS gender,COUNT(b.id) AS bookings FROM users u LEFT JOIN bookings b ON b.user_id=u.id GROUP BY u.id ORDER BY u.created_at DESC',
+            'SELECT u.id,u.name,u.phone,u.created_at,(SELECT latest.gender FROM bookings latest WHERE latest.user_id=u.id ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1) AS gender,(SELECT latest.birthday FROM bookings latest WHERE latest.user_id=u.id AND latest.superseded=0 AND latest.birthday!=\'\' ORDER BY latest.created_at DESC,latest.id DESC LIMIT 1) AS birthday,COUNT(DISTINCT COALESCE(b.booking_group_id,b.id)) AS bookings FROM users u LEFT JOIN bookings b ON b.user_id=u.id AND b.superseded=0 GROUP BY u.id ORDER BY u.created_at DESC',
           ),
           notifications: await all('SELECT * FROM notifications'),
           demo: false,
         });
       }
+      if(path==='admin/participation'&&method==='POST'){
+        assert(await one('SELECT id FROM events WHERE id=?',b.eventId),'活动不存在',404);
+        await db().batch(await modeStatements(b.eventId,b.modes));return response({ok:true,modes:await participationModes(b.eventId)});
+      }
       if (path === 'admin/experiences/delete' && method === 'POST') {
         const item = await one('SELECT * FROM experiences WHERE id=? AND event_id=?',b.id,b.eventId);
         assert(item,'体验不存在',404);
-        const result = await q('DELETE FROM experiences WHERE id=? AND event_id=? AND NOT EXISTS(SELECT 1 FROM slots WHERE event_id=? AND experience=?)',b.id,b.eventId,b.eventId,item.name).run();
+        assert(!(await one('SELECT id FROM slots WHERE experience_id=? LIMIT 1',item.id)),'该体验已有场次，不能删除，可停用');
+        const result = await q('DELETE FROM experiences WHERE id=? AND event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=? AND EXISTS(SELECT 1 FROM json_each(experience_ids) WHERE value=?))',b.id,b.eventId,b.eventId,item.id).run();
         assert(result.meta.changes === 1,'此体验仍有关联场次，请先调整或删除场次；有预约记录时可停用体验');
         return response({ok:true});
       }
@@ -488,11 +534,12 @@ export async function handle(req: Request) {
         if (b.id) {
           const previous = await one('SELECT * FROM experiences WHERE id=? AND event_id=?',b.id,b.eventId);
           assert(previous,'体验不存在',404);
+          assert(await one("SELECT id FROM participation_modes WHERE id=? AND kind='experiences'",previous.mode_id),'请在参与方式维护中修改该项目');
           await db().batch([
             q('UPDATE experiences SET name=?,enabled=? WHERE id=?',name,b.enabled?1:0,b.id),
             q('UPDATE slots SET experience=? WHERE experience=? AND event_id=?',name,previous.name,b.eventId),
           ]);
-        } else await q('INSERT INTO experiences(id,event_id,name,enabled) VALUES(?,?,?,?)',uuid(),b.eventId,name,b.enabled?1:0).run();
+        } else {const mode=await one("SELECT id FROM participation_modes WHERE event_id=? AND kind='experiences' AND enabled=1 ORDER BY position LIMIT 1",b.eventId);assert(mode,'请先新增包含体验的参与方式');await q('INSERT INTO experiences(id,event_id,name,enabled,mode_id) VALUES(?,?,?,?,?)',uuid(),b.eventId,name,b.enabled?1:0,mode.id).run();}
         return response({ok:true});
       }
       if (path === 'admin/events' && method === 'POST') {
@@ -532,7 +579,15 @@ export async function handle(req: Request) {
             b.start_date <= b.end_date,
           '活动日期不正确',
         );
+        const visitEnabled = b.visit_enabled === undefined ? 1 : Number(b.visit_enabled);
+        const experienceEnabled = b.experience_enabled === undefined ? 1 : Number(b.experience_enabled);
+        assert([0,1].includes(visitEnabled) && [0,1].includes(experienceEnabled) && (visitEnabled || experienceEnabled),'至少启用一种参与方式');
+        const initialExperiences = b.id ? [] : String(b.experience_names||'').split(/\r?\n/).map((v:string)=>v.trim()).filter(Boolean);
+        assert(initialExperiences.length<=20 && new Set(initialExperiences).size===initialExperiences.length && initialExperiences.every((v:string)=>v.length<=60 && v!=='仅登岛参观'),'体验名称不能重复，最多20项，每项最多60字');
         const id = b.id || uuid();
+        const modeInput=b.participation_modes || (!b.id?[{name:'仅登岛参观',kind:'direct',enabled:!!visitEnabled},...(initialExperiences.length?[{name:'参与体验',kind:'experiences',enabled:!!experienceEnabled,items:initialExperiences.map((name:string)=>({name}))}]:[])]:null);
+        const modeChanges=modeInput?await modeStatements(id,modeInput):[];
+        const eventChanges:D1PreparedStatement[]=[];
         if (b.id) {
           assert(
             await one('SELECT id FROM events WHERE id=?', id),
@@ -546,7 +601,7 @@ export async function handle(req: Request) {
             b.end_date,
           );
           assert(!invalid, '已有场次超出新日期范围，请先调整场次');
-          await q(
+          eventChanges.push(q(
             'UPDATE events SET title=?,subtitle=?,description=?,location=?,start_date=?,end_date=? WHERE id=?',
             text(b.title, 100),
             text(b.subtitle),
@@ -555,9 +610,9 @@ export async function handle(req: Request) {
             b.start_date,
             b.end_date,
             id,
-          ).run();
+          ));
         } else
-          await q(
+          eventChanges.push(q(
             'INSERT INTO events(id,title,subtitle,description,location,start_date,end_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
             id,
             text(b.title, 100),
@@ -568,11 +623,12 @@ export async function handle(req: Request) {
             b.end_date,
             'draft',
             now(),
-          ).run();
+          ));
         if (Object.keys(media).length) {
           const keys = Object.keys(media);
-          await q('UPDATE events SET '+keys.map(k=>k+'=?').join(',')+' WHERE id=?', ...keys.map(k=>media[k]),id).run();
+          eventChanges.push(q('UPDATE events SET '+keys.map(k=>k+'=?').join(',')+' WHERE id=?', ...keys.map(k=>media[k]),id));
         }
+        await db().batch([...eventChanges,q('UPDATE events SET visit_enabled=?,experience_enabled=? WHERE id=?',visitEnabled,experienceEnabled,id),...modeChanges]);
         return response({ id });
       }
       if (path === 'admin/events/delete' && method === 'POST') {
@@ -584,9 +640,10 @@ export async function handle(req: Request) {
         const result=await db().batch([
           q('DELETE FROM slots WHERE event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
           q('DELETE FROM experiences WHERE event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
+          q('DELETE FROM participation_modes WHERE event_id=?',id),
           q('DELETE FROM events WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
         ]);
-        assert(result[2].meta.changes===1,'此活动已有预约记录，不能删除');
+        assert(result[3].meta.changes===1,'此活动已有预约记录，不能删除');
         return response({ok:true});
       }
       if (path === 'admin/event-status' && method === 'POST') {
@@ -607,129 +664,56 @@ export async function handle(req: Request) {
         assert(result.meta.changes === 1, '此场次已有预约记录，不能删除');
         return response({ok:true});
       }
-      if (path === 'admin/slots/batch' && method === 'POST') {
-        const event=await one('SELECT * FROM events WHERE id=?',b.eventId);
-        assert(event && /^\d{4}-\d{2}-\d{2}$/.test(b.date) && b.date>=event.start_date && b.date<=event.end_date,'场次日期需在活动日期内');
-        assert(await validSlotExperience(b.eventId,b.experience),'请选择本活动已启用的体验');
-        assert(Number.isInteger(b.capacity)&&b.capacity>=1&&b.capacity<=10000,'每场名额须为1至10000的整数');
-        let times:string[];try{times=generateSlotTimes(b.startTime,b.endTime,b.interval)}catch(e:any){throw new ApiError(e.message)}
-        const results=await db().batch(times.map(time=>q('INSERT INTO slots(id,event_id,experience,date,time,capacity) SELECT ?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM slots WHERE event_id=? AND experience=? AND date=? AND time=?)',uuid(),b.eventId,b.experience,b.date,time,b.capacity,b.eventId,b.experience,b.date,time)));
-        const created=results.reduce((n,r)=>n+(r.meta.changes||0),0);
-        return response({ok:true,created,skipped:times.length-created});
-      }
-      if (path === 'admin/slots' && method === 'POST') {
-        assert(
-          Number.isInteger(b.capacity) &&
-            b.capacity >= 1 &&
-            b.capacity <= 10000,
-          '名额需为 1–10000 的整数',
-        );
-        if (b.id) {
-          const slot = await one(
-            "SELECT s.*,(SELECT COUNT(*) FROM bookings WHERE slot_id=s.id AND status IN ('confirmed','checked')) AS booked FROM slots s WHERE s.id=?",
-            b.id,
-          );
-          assert(slot, '场次不存在', 404);
-          assert(b.capacity >= slot.booked, '名额不能低于已预约人数');
-          const experience = b.experience ?? slot.experience, date = b.date ?? slot.date, time = b.time ?? slot.time;
-          const event = await one('SELECT * FROM events WHERE id=?', slot.event_id);
-          assert((experience === slot.experience || await validSlotExperience(slot.event_id,experience)) && /^([01]\d|2[0-3]):[0-5]\d$/.test(time), '请填写正确的体验与时间');
-          assert(/^\d{4}-\d{2}-\d{2}$/.test(date) && date >= event.start_date && date <= event.end_date, '场次日期需在活动日期内');
-          const changed = experience !== slot.experience || date !== slot.date || time !== slot.time;
-          if (changed) {
-            assert(!(await one('SELECT id FROM bookings WHERE slot_id=? LIMIT 1', b.id)), '此场次已有预约记录，只能调整名额');
-            assert(!(await one('SELECT id FROM slots WHERE event_id=? AND experience=? AND date=? AND time=? AND id<>?',slot.event_id,experience,date,time,b.id)), '该场次已存在');
-            const updated = await q('UPDATE slots SET experience=?,date=?,time=? WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE slot_id=?)',experience,date,time,b.id,b.id).run();
-            assert(updated.meta.changes === 1, '此场次已有预约记录，只能调整名额');
+      if ((path==='admin/slots'||path==='admin/slots/batch')&&method==='POST') {
+        const old=b.id?await one("SELECT s.*,(SELECT COUNT(DISTINCT user_id) FROM bookings WHERE slot_id=s.id AND status IN ('confirmed','checked')) booked FROM slots s WHERE id=?",b.id):null;
+        assert(!b.id||old,'场次不存在',404);
+        const eventId=old?.event_id||b.eventId,modeId=b.modeId||old?.mode_id;
+        const mode=await one('SELECT * FROM participation_modes WHERE id=? AND event_id=?',modeId||'',eventId);
+        assert(mode&&(mode.enabled||old?.mode_id===modeId),'请选择本活动已启用的参与方式');
+        const experienceId=mode.kind==='direct'?null:b.experienceId===undefined?(old?.experience_id||null):(b.experienceId||null);
+        assert(mode.kind==='direct'||!!experienceId,'请选择具体体验');
+        assert(!experienceId||(mode.kind==='experiences'&&await one('SELECT id FROM experiences WHERE id=? AND mode_id=?',experienceId,modeId)),'请选择本参与方式下的体验');
+        const event=await one('SELECT * FROM events WHERE id=?',eventId);
+        const date=b.date||old?.date;
+        assert(event&&/^\d{4}-\d{2}-\d{2}$/.test(date)&&date>=event.start_date&&date<=event.end_date,'场次日期需在活动日期内');
+        assert(Number.isInteger(b.capacity)&&b.capacity>=Math.max(1,old?.booked||0)&&b.capacity<=10000,'名额须为1至10000，且不能低于已预约人数');
+        let times:string[];
+        if(path==='admin/slots/batch'){assert(!b.id,'编辑场次不支持批量');try{times=generateSlotTimes(b.startTime,b.endTime,b.interval,b.duration)}catch(e:any){throw new ApiError(e.message)}}
+        else {const time=b.time||old?.time;try{times=[validateSlotTime(time)]}catch(e:any){throw new ApiError(e.message)}}
+        if(old){
+          if(experienceId!==(old.experience_id||null)||modeId!==old.mode_id||date!==old.date||times[0]!==old.time){
+            assert(!(await one('SELECT id FROM bookings WHERE slot_id=? LIMIT 1',old.id)),'已有预约的场次只能调整名额');
+            const changed=await q('UPDATE slots SET mode_id=?,experience_id=?,date=?,time=? WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE slot_id=?)',modeId,experienceId,date,times[0],old.id,old.id).run();assert(changed.meta.changes===1,'已有预约的场次只能调整名额');
           }
-
-          const stmts = [
-            q(
-              "UPDATE slots SET capacity=? WHERE id=? AND ? >= (SELECT COUNT(*) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked'))",
-              b.capacity,
-              b.id,
-              b.capacity,
-              b.id,
-            ),
-          ];
-          stmts.push(
-            q(
-              "UPDATE bookings SET status='confirmed' WHERE id IN (SELECT id FROM bookings WHERE slot_id=? AND status='waitlisted' ORDER BY created_at,id LIMIT MAX(0,(SELECT capacity FROM slots WHERE id=?)-(SELECT COUNT(*) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked'))))",
-              b.id,
-              b.id,
-              b.id,
-            ),
-          );
-          await db().batch(stmts);
-          await flushNotices();
-        } else {
-          const e = await one('SELECT * FROM events WHERE id=?', b.eventId);
-          assert(
-            e && b.date >= e.start_date && b.date <= e.end_date,
-            '场次日期需在活动日期内',
-          );
-          assert(
-            (await validSlotExperience(b.eventId,b.experience)) &&
-              /^([01]\d|2[0-3]):[0-5]\d$/.test(b.time),
-            '请填写正确的体验与时间',
-          );
-          assert(
-            !(await one(
-              'SELECT id FROM slots WHERE event_id=? AND experience=? AND date=? AND time=?',
-              b.eventId,
-              b.experience,
-              b.date,
-              b.time,
-            )),
-            '该场次已存在',
-          );
-          await q(
-            'INSERT INTO slots VALUES(?,?,?,?,?,?)',
-            uuid(),
-            b.eventId,
-            b.experience,
-            b.date,
-            b.time,
-            b.capacity,
-          ).run();
+          await q("UPDATE slots SET capacity=? WHERE id=? AND ?>=(SELECT COUNT(DISTINCT user_id) FROM bookings WHERE slot_id=? AND status IN ('confirmed','checked'))",b.capacity,old.id,b.capacity,old.id).run();await flushNotices();return response({ok:true});
         }
-        return response({ ok: true });
+        const result=await db().batch(times.map(time=>q("INSERT INTO slots(id,event_id,experience,date,time,capacity,mode_id,experience_id) SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM slots WHERE mode_id=? AND COALESCE(experience_id,'')=COALESCE(?,'') AND date=? AND time=?)",uuid(),eventId,'',date,time,b.capacity,modeId,experienceId,modeId,experienceId,date,time)));
+        const created=result.reduce((n,r)=>n+(r.meta.changes||0),0);assert(created||path==='admin/slots/batch','该场次已存在');return response({ok:true,created,skipped:times.length-created});
       }
       if (path === 'admin/checkin' && method === 'POST') {
         const code = text(b.code, 100).replace(/^HG:/, '');
         assert(code, '请输入入场码');
-        const booking = await one(joined + ' WHERE b.code=?', code);
-        assert(booking, '入场凭证不存在', 404);
-        if (booking.status === 'checked') return response({ ...booking, alreadyChecked: true });
-        assert(
-          booking.status === 'confirmed',
-          booking.status === 'checked'
-            ? '该凭证已核销，请勿重复操作'
-            : '该预约尚未确认或已取消',
-        );
-        const checkedAt = now();
-        const result = await q(
-          "UPDATE bookings SET status='checked',checked_at=? WHERE id=? AND status='confirmed'",
-          checkedAt,
-          booking.id,
-        ).run();
-        if (result.meta.changes !== 1) {
-          const current = await one(joined + ' WHERE b.id=?', booking.id);
-          if (current?.status === 'checked') return response({ ...current, alreadyChecked: true });
-          throw new ApiError('预约状态已变化，请重新扫码', 409);
-        }
-        return response({ ...booking, status: 'checked', checked_at: checkedAt, alreadyChecked: false });
+        const items=await all(joined+' WHERE c.code=? ORDER BY s.date,s.time',code);
+        assert(items.length,'入场凭证不存在',404);
+        assert(items.some((item:any)=>['confirmed','checked'].includes(item.status)),'该预约尚未确认或已取消');
+        const checkedAt=now(),ids=items.map((item:any)=>item.id),marks=ids.map(()=>'?').join(',');
+        const result=await q(`UPDATE bookings SET status='checked',checked_at=? WHERE id IN (${marks}) AND superseded=0 AND status='confirmed'`,checkedAt,...ids).run();
+        const current=await all(joined+' WHERE c.code=? ORDER BY s.date,s.time',code);
+        const checked=current.filter((item:any)=>item.status==='checked');
+        assert(checked.length,'预约状态已变化，请重新扫码',409);
+        return response({...checked[0],experience_label:current.map((item:any)=>(item.experience_label||item.experience)+' · '+item.date+' '+item.time+' · '+(item.status==='checked'?'已核销':'已取消')).join('；'),time:[...new Set(current.map((item:any)=>item.time))].join('、'),reservations:current,alreadyChecked:result.meta.changes===0});
       }
     }
     throw new ApiError('接口不存在', 404);
   } catch (e: any) {
-    if (e.message?.includes('UNIQUE constraint failed: bookings.user_id'))
+    if (e.message?.includes('BOOKING_CONFLICT') || e.message?.includes('UNIQUE constraint failed: bookings.user_id'))
       return response(
-        { error: '每场活动仅可预约一种体验，请先取消原预约' },
+        { error: '该活动已有预约或体验重复，请先查看或取消已有预约' },
         409,
       );
+    if(e.message?.includes('UNIQUE constraint failed: slots.mode_id'))return response({error:'该参与方式下的日期和时间已存在'},409);
     if (e.message?.includes('SLOT_FULL'))
-      return response({ error: '场次名额已变化，请刷新后重试' }, 409);
+      return response({ error: '所选场次名额已满，请选择其他时间' }, 409);
     if (e instanceof ApiError) return response({ error: e.message }, e.status);
     console.error('API failure', e.message);
     return response({ error: '服务暂时不可用，请稍后重试' }, 500);

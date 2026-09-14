@@ -1,0 +1,18 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');let page;
+vm.runInNewContext(fs.readFileSync(require('path').join(__dirname,'../pages/index/index.js'),'utf8'),{require:()=>({}),Page:p=>page=p,console,Date,setTimeout,clearTimeout,setInterval,clearInterval});
+page.data=JSON.parse(JSON.stringify(page.data));page.setData=function(v){Object.assign(this.data,v)};
+page.data.event={participation_modes:[{id:'visit',name:'参观',kind:'direct',enabled:1,items:[]},{id:'workshop',name:'工坊',kind:'experiences',enabled:1,items:[{id:'a',name:'A'},{id:'b',name:'B'}]}],slots:[{id:'v',mode_id:'visit',date:'2099-01-01',time:'13:00-13:40',capacity:1,booked:0},{id:'s',mode_id:'workshop',date:'2099-01-01',time:'13:00-13:40',capacity:1,booked:0},{id:'t',mode_id:'workshop',date:'2099-01-01',time:'14:00-14:40',capacity:1,booked:1}]};
+const ev=(index,value,id)=>({currentTarget:{dataset:{index,experience:index,value,id}}});
+page.prepareSlots();page.participationChange({detail:{value:2}});page.chooseCardDate(ev(0,'2099-01-01'));
+page.toggleExperience(ev(0));assert(!page.data.selectionReady);
+page.chooseExperienceTime(ev(0,null,'s'));assert(page.data.selectionReady);
+page.toggleExperience(ev(1));assert(!page.data.selectionReady);
+page.chooseExperienceTime(ev(1,null,'t'));assert(page.data.selectionReady);assert(page.data.isFull);
+assert.equal(page.data.selectedSelections.map(x=>x.slotId).join(','),'s,t');
+page.chooseExperienceTime(ev(1,null,'s'));assert.equal(page.data.selectedSlotIds.join(','),'s');assert(!page.data.isFull);
+page.toggleExperience(ev(0));assert.equal(page.data.selectedExperienceIds.join(','),'b');assert(page.data.selectionReady);
+page.chooseCardDate(ev(0,'2099-01-01'));assert(!page.data.selectionReady);assert.equal(page.data.selectedSlotIds.length,0);
+page.participationChange({detail:{value:1}});assert.equal(page.data.selectedExperienceIds.length,0);page.chooseCardDate(ev(0,'2099-01-01'));page.chooseCardTime(ev(0,null,'v'));assert(page.data.selectionReady);
+page.participationChange({detail:{value:0}});assert(!page.data.selectionReady);
+page.data.changing=true;page.data.booking={slot_id:'s',experience_ids:'["a","b"]'};page.prepareSlots();page.chooseCardDate(ev(0,'2099-01-01'));page.chooseExperienceTime(ev(0,null,'t'));assert.equal(page.data.selectedSlotIds.join(','),'t');assert(!page.data.selectionReady);page.chooseExperienceTime(ev(1,null,'s'));assert(page.data.selectionReady);
+console.log('PASS: independent experience times, shared date reset, deselection, full slot, direct visit, grouped reschedule');

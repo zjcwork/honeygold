@@ -1,5 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
+import {groupBookings,activityStatus} from '@/lib/booking-groups';
 import HomeContent from './home-content';
 import {
   ChevronLeft,
@@ -66,7 +67,7 @@ export default function Mini() {
       setTab('mine');
       setEvent(null);
       setBooking(null);
-      setFilter('all');
+      setFilter('ongoing');
     } catch (e: any) {
       setError(e.message);
     }
@@ -312,7 +313,7 @@ export default function Mini() {
                 ].map(([v, t]) => (
                   <button
                     key={v}
-                    className={filter === v ? 'on' : ''}
+                    className={(filter==='all'?'ongoing':filter) === v ? 'on' : ''}
                     onClick={() => setFilter(v)}
                   >
                     {t}
@@ -369,30 +370,27 @@ export default function Mini() {
               <p>收藏每一次与蜜金的相遇。</p>
               <div className="mini-tabs">
                 {[
-                  ['all', '全部'],
-                  ['confirmed', '进行中'],
-                  ['waitlisted', '候补中'],
-                  ['cancelled', '已取消'],
-                  ['checked', '已核销'],
+                  ['ongoing', '进行中'],
+                  ['history', '历史活动'],
                 ].map(([v, t]) => (
                   <button
                     key={v}
-                    className={filter === v ? 'on' : ''}
+                    className={(filter==='all'?'ongoing':filter) === v ? 'on' : ''}
                     onClick={() => setFilter(v)}
                   >
                     {t}
                   </button>
                 ))}
               </div>
-              {mine
-                .filter((b) => filter === 'all' || b.status === filter)
+              {groupBookings(mine)
+                .filter((b) => activityStatus(b.items) === (filter==='history'?'history':'ongoing'))
                 .map((b) => (
                   <button
                     className="my-booking"
                     key={b.id}
                     onClick={() => showTicket(b)}
                   >
-                    <span className="status">{stateLabel(b.status)}</span>
+                    <span className="status">{activityStatus(b.items)==='history'?'已核销':'进行中'}</span>
                     <h2>{b.title}</h2>
                     <p>{b.experience}</p>
                     <label>
@@ -401,7 +399,7 @@ export default function Mini() {
                     <span className="my-arrow">查看预约 →</span>
                   </button>
                 ))}
-              {!mine.filter((b) => filter === 'all' || b.status === filter)
+              {!groupBookings(mine).filter((b) => activityStatus(b.items) === (filter==='history'?'history':'ongoing'))
                 .length && (
                 <div className="empty">
                   <Ticket />
@@ -542,7 +540,7 @@ export default function Mini() {
                     <span>入场凭证编号</span><strong className="ticket-code-value">HG:{booking.code}</strong><span>点击复制凭证编号</span>
                   </button>
                 )}
-                {['confirmed', 'waitlisted'].includes(booking.status) && (
+                {['confirmed'].includes(booking.status) && (
                   <div className="ticket-actions">
                     <button onClick={change}>修改场次</button>
                     <button onClick={() => setSheet('cancel')}>取消报名</button>
@@ -622,11 +620,11 @@ export default function Mini() {
           </div>
           <DialogDescription>
             {sheet === 'slots'
-              ? '*每场活动仅可预约一种体验，如需更换请取消后重新预约。'
+              ? '*同一参与方式下，所选体验共用一个预约场次。'
               : sheet === 'form'
                 ? '填写真实信息，开启你的蜜金海岛之旅。'
                 : sheet === 'cancel'
-                  ? '取消后名额将释放给候补嘉宾。'
+                  ? '取消后将释放名额。'
                   : 'HONEY GOLD CLUB'}
           </DialogDescription>
           {error && <div className="alert">{error}</div>}
@@ -684,14 +682,14 @@ export default function Mini() {
                     <button
                       key={s.id}
                       disabled={
-                        new Date(`${s.date}T${s.time}:00+08:00`).getTime() <=
-                        Date.now()
+                        new Date(`${s.date}T${s.time.split('-')[0]}:00+08:00`).getTime() <=
+                        Date.now() || s.booked >= s.capacity
                       }
                       className={slotId === s.id ? 'selected' : ''}
                       onClick={() => setSlotId(s.id)}
                     >
                       {s.time}
-                      {s.booked >= s.capacity && <small>已满 · 可候补</small>}
+                      {s.booked >= s.capacity && <small>已满</small>}
                     </button>
                   ))}
                 </div>
@@ -706,7 +704,7 @@ export default function Mini() {
                   {busy
                     ? '提交中…'
                     : selected && selected.booked >= selected.capacity
-                      ? '预约已满 / 提交候补'
+                      ? '名额已满'
                       : changing
                         ? '确认改签'
                         : '确认预约'}

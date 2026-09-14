@@ -1,0 +1,32 @@
+services:
+  honeygold:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:${HTTP_PORT:-13001}:3000"
+    environment:
+      NODE_ENV: production
+      HONEYGOLD_RUNTIME: node
+      HONEYGOLD_DATA_DIR: /app/data
+      WECHAT_APP_ID: ${WECHAT_APP_ID:?请在.env中填写WECHAT_APP_ID}
+      WECHAT_APP_SECRET: ${WECHAT_APP_SECRET:?请在.env中填写WECHAT_APP_SECRET}
+      WECHAT_SUBSCRIBE_TEMPLATE_ID: ${WECHAT_SUBSCRIBE_TEMPLATE_ID:-}
+      WECHAT_SUBSCRIBE_FIELDS: '${WECHAT_SUBSCRIBE_FIELDS:-}'
+    volumes:
+      - honeygold-data:/app/data
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/config').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  honeygold-data:

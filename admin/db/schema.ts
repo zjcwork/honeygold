@@ -7,6 +7,8 @@ import {
 } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 export const events = sqliteTable('events', {
+  visitEnabled:integer('visit_enabled').notNull().default(1),
+  experienceEnabled:integer('experience_enabled').notNull().default(1),
   contactWechat:text('contact_wechat').notNull().default(''),
   contactQr:text('contact_qr').notNull().default(''),
   notices: text('notices').notNull().default(''),
@@ -32,12 +34,14 @@ export const slots = sqliteTable(
     eventId: text('event_id')
       .notNull()
       .references(() => events.id),
+    modeId:text('mode_id').references(()=>participationModes.id),
+    experienceId:text('experience_id').references(()=>experiences.id),
     experience: text('experience').notNull(),
     date: text('date').notNull(),
     time: text('time').notNull(),
     capacity: integer('capacity').notNull(),
   },
-  (t) => [index('idx_slots_event').on(t.eventId)],
+  (t) => [index('idx_slots_event').on(t.eventId),uniqueIndex('slots_mode_experience_datetime').on(t.modeId,sql`COALESCE(${t.experienceId}, '')`,t.date,t.time)],
 );
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
@@ -68,7 +72,11 @@ export const bookings = sqliteTable(
     name: text('name').notNull(),
     phone: text('phone').notNull(),
     gender: text('gender').notNull(),
+    birthday:text('birthday').notNull().default(''),
     status: text('status').notNull(),
+    experienceIds:text('experience_ids').notNull().default('[]'),
+    bookingGroupId:text('booking_group_id'),
+    superseded:integer('superseded').notNull().default(0),
     photoConsent: integer('photo_consent').notNull().default(0),
     termsVersion: text('terms_version').notNull(),
     code: text('code').notNull().unique(),
@@ -76,9 +84,7 @@ export const bookings = sqliteTable(
     checkedAt: text('checked_at'),
   },
   (t) => [
-    uniqueIndex('idx_booking_active_user_event')
-      .on(t.userId, t.eventId)
-      .where(sql`${t.status} != 'cancelled'`),
+    // Participation uniqueness and visit/experience exclusion are enforced by migration triggers.
     index('idx_booking_slot_status').on(t.slotId, t.status),
     index('idx_booking_created').on(t.createdAt),
   ],
@@ -94,4 +100,6 @@ export const notifications = sqliteTable('notifications', {
 
 export const contentSettings = sqliteTable('content_settings', { id: text('id').primaryKey(), payload: text('payload').notNull() });
 
-export const experiences = sqliteTable('experiences', {id:text('id').primaryKey(),eventId:text('event_id').notNull().references(()=>events.id),name:text('name').notNull(),enabled:integer('enabled').notNull().default(1)}, t=>[uniqueIndex('experiences_event_name').on(t.eventId,t.name)]);
+export const participationModes=sqliteTable('participation_modes',{id:text('id').primaryKey(),eventId:text('event_id').notNull().references(()=>events.id),name:text('name').notNull(),kind:text('kind').notNull(),enabled:integer('enabled').notNull().default(1),position:integer('position').notNull().default(0)});
+export const experiences = sqliteTable('experiences', {modeId:text('mode_id').references(()=>participationModes.id),id:text('id').primaryKey(),eventId:text('event_id').notNull().references(()=>events.id),name:text('name').notNull(),enabled:integer('enabled').notNull().default(1)}, t=>[uniqueIndex('experiences_event_name').on(t.eventId,t.name)]);
+export const bookingCredentials=sqliteTable('booking_credentials',{groupKey:text('group_key').primaryKey(),code:text('code').notNull().unique()});

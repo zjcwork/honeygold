@@ -1,4 +1,5 @@
 'use client';
+import {groupBookings,activityStatus} from '@/lib/booking-groups';
 import { useState, useEffect, useCallback } from 'react';
 import {
   CalendarDays,
@@ -29,9 +30,7 @@ import Dashboard from './dashboard';
 import ContentManager from './content-manager';
 import LegalManager from './legal-manager';
 import AdminUsers from './admin-users';
-import EventImages from './event-images';
-import ImageUpload from './image-upload';
-import EventDetailEditor from './event-detail-editor';
+import EventForm from './event-form';
 import ExperienceManager from './experience-manager';
 import SlotGroups from './slot-groups';
 import SlotTimeFields from './slot-time-fields';
@@ -63,13 +62,19 @@ export function Badge({ value }: any) {
     </span>
   );
 }
+function bookingExperiences(item:any):any[]{
+  try{const values=JSON.parse(item.experience_items||'[]');if(Array.isArray(values)&&values.length)return values}catch{}
+  return [{id:item.id,name:item.experience_label||item.experience||'未配置'}];
+}
 export function BookingTable({ rows, onDetail }: any) {
+  rows=groupBookings(rows).map(r=>({...r,experienceColumns:r.items.flatMap((item:any)=>bookingExperiences(item).map(experience=>({...experience,date:item.date,time:item.time})))}));
   return (
-    <div className="table-wrap">
-      <table>
+    <div className="table-wrap reservation-table">
+      <table style={{minWidth:1100}}>
+        <colgroup><col style={{width:140}}/><col style={{width:60}}/><col style={{width:180}}/><col style={{width:180}}/><col style={{width:175}}/><col style={{width:190}}/><col style={{width:100}}/><col style={{width:75}}/></colgroup>
         <thead>
           <tr>
-            {['预约人', '性别', '活动 / 体验', '预约场次', '预约码', '预约状态', '操作'].map(
+            {['预约人', '性别', '活动', '体验', '预约时间', '预约码', '预约状态', '操作'].map(
               (x) => (
                 <th key={x}>{x}</th>
               ),
@@ -77,38 +82,22 @@ export function BookingTable({ rows, onDetail }: any) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r: any) => (
-            <tr key={r.id}>
-              <td>
-                {r.name}
-                <small>
-                  {r.phone || '未填写'}
-                </small>
-              </td>
-              <td>{r.gender || '未填写'}</td>
-              <td>
-                {r.title}
-                <small>{r.experience}</small>
-              </td>
-              <td>
-                {r.date}
-                <small>{r.time}</small>
-              </td>
-              <td style={{ fontVariantNumeric: 'tabular-nums', userSelect: 'text' }}>{r.code ? `HG:${r.code}` : '—'}</td>
-              <td>
-                <Badge value={r.status} />
-              </td>
-              <td>
-                {onDetail ? (
-                  <Button variant="ghost" onClick={() => onDetail(r)}>
-                    详情
-                  </Button>
-                ) : (
-                  <a href="/?view=预约管理">查看</a>
-                )}
-              </td>
+          {rows.flatMap((r:any)=>r.experienceColumns.map((experience:any,index:number)=>(
+            <tr key={r.id+':'+index} className={index===r.experienceColumns.length-1?'reservation-group-end':'reservation-experience-row'}>
+              {index===0&&<>
+                <td rowSpan={r.experienceColumns.length}>{r.name}<small>{r.phone||'未填写'}</small></td>
+                <td rowSpan={r.experienceColumns.length}>{r.gender||'未填写'}</td>
+                <td rowSpan={r.experienceColumns.length}>{r.title}</td>
+              </>}
+              <td className="reservation-experience-name">{experience.name}</td>
+              <td>{experience.date}<small>{experience.time}</small></td>
+              {index===0&&<>
+                <td rowSpan={r.experienceColumns.length} className="reservation-code" title={r.code?`HG:${r.code}`:undefined} style={{fontVariantNumeric:'tabular-nums',userSelect:'text'}}>{r.code?`HG:${r.code}`:'—'}</td>
+                <td rowSpan={r.experienceColumns.length}>{<span className="status">{activityStatus(r.items)==='history'?'历史活动':activityStatus(r.items)==='ongoing'?'进行中':r.items.every((item:any)=>item.status==='cancelled')?'已取消':'未参与'}</span>}</td>
+                <td rowSpan={r.experienceColumns.length}>{onDetail?<Button variant="ghost" onClick={()=>onDetail(r)}>详情</Button>:<a href="/?view=预约管理">查看</a>}</td>
+              </>}
             </tr>
-          ))}
+          )))}
         </tbody>
       </table>
       {!rows.length && (
@@ -227,12 +216,11 @@ export default function Home() {
       },
     });
   }
-  const reservations = data.bookings.filter(
-    (b: any) =>
-      (filter === 'all' || b.status === filter) &&
-      (eventFilter === 'all' || b.event_id === eventFilter) &&
-      (b.name + b.phone + b.title).includes(query),
-  );
+  const reservations = groupBookings(data.bookings).filter(group =>
+    (eventFilter === 'all' || group.event_id === eventFilter) &&
+    (group.name + group.phone + group.title).includes(query) &&
+    (filter === 'all' || activityStatus(group.items) === filter)
+  ).flatMap(group=>group.items);
   const slots = data.slots.filter(
     (s: any) =>
       (eventFilter === 'all' || s.event_id === eventFilter) &&
@@ -246,21 +234,15 @@ export default function Home() {
       CalendarDays,
     ],
     [
-      '累计预约',
-      data.bookings.filter((b: any) => b.status !== 'cancelled').length,
-      '包含已确认、候补与已核销',
+      '预约人数',
+      new Set(data.bookings.filter((b:any)=>b.status!=='cancelled').map((b:any)=>b.user_id)).size,
+      `${groupBookings(data.bookings.filter((b:any)=>b.status!=='cancelled')).length} 次活动预约 · 人数按会员去重`,
       Ticket,
     ],
     [
-      '候补人数',
-      data.bookings.filter((b: any) => b.status === 'waitlisted').length,
-      '名额释放后自动递补',
-      Users,
-    ],
-    [
       '已核销人数',
-      data.bookings.filter((b: any) => b.status === 'checked').length,
-      '现场入场记录',
+      new Set(data.bookings.filter((b:any)=>b.status==='checked').map((b:any)=>b.user_id)).size,
+      `${groupBookings(data.bookings.filter((b:any)=>b.status==='checked')).length} 次活动已有核销 · 人数按会员去重`,
       ScanLine,
     ],
   ];
@@ -269,7 +251,7 @@ export default function Home() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          honey<span>gold</span>
+          HONEY<span>GOLD</span>
           <small>蜜金 · 活动管理平台</small>
         </div>
         <nav>
@@ -337,7 +319,7 @@ export default function Home() {
                       工作台: '欢迎回来，蜜金运营团队。一起为下一次相遇做好准备。',
                       活动管理: '策划每一次相遇，让品牌体验有序发生。',
                       预约管理: '每一份预约，都是一份值得认真回应的期待。',
-                      场次与名额: '安排体验场次，实时掌握预约与候补情况。',
+                      场次与名额: '安排体验场次，实时掌握预约情况。',
                       会员管理: '记录每位嘉宾与蜜金的美好相遇。',
                       现场核销: '核验专属入场凭证，欢迎嘉宾登岛。',
                       条款维护: '维护使用条款、预约须知和隐私说明。',
@@ -464,13 +446,13 @@ export default function Home() {
                                   场次
                                   <small>
                                     {
-                                      data.bookings.filter(
+                                      groupBookings(data.bookings.filter(
                                         (b: any) =>
                                           b.event_id === e.id &&
                                           b.status !== 'cancelled',
-                                      ).length
+                                      )).length
                                     }{' '}
-                                    人预约
+                                    次活动预约
                                   </small>
                                 </td>
                                 <td>
@@ -483,7 +465,7 @@ export default function Home() {
                                     >
                                       编辑
                                     </Button>
-                                    <Button variant="ghost" onClick={()=>setModal({type:'experiences',value:e})}>体验维护</Button>
+                                    <Button variant="ghost" onClick={()=>setModal({type:'experiences',value:e})}>参与方式与体验</Button>
                                     <Button variant="ghost" disabled={busy} onClick={()=>setModal({type:'confirm',title:'删除活动',description:`确认删除「${e.title}」？该活动及其体验、场次将一并删除，无法恢复。有预约记录的活动不能删除。`,path:'admin/events/delete',body:{id:e.id}})}>删除</Button>
                                     <Button
                                       variant="ghost"
@@ -590,7 +572,7 @@ export default function Home() {
                               r.name,
                               r.phone,
                               r.title,
-                              r.experience,
+                              r.experience_label||r.experience,
                               r.date,
                               r.time,
                               stateLabel(r.status),
@@ -607,10 +589,8 @@ export default function Home() {
                   <div className="toolbar tabs">
                     {[
                       ['all', '全部预约'],
-                      ['confirmed', '预约成功'],
-                      ['waitlisted', '候补中'],
-                      ['checked', '已核销'],
-                      ['cancelled', '已取消'],
+                      ['ongoing', '进行中'],
+                      ['history', '历史活动'],
                     ].map(([v, t]) => (
                       <button
                         key={v}
@@ -633,7 +613,7 @@ export default function Home() {
               )}
               {view === '场次与名额' && (
                 <>
-                  <SlotGroups slots={data.slots} events={data.events} experiences={data.experiences || []} eventId={eventFilter} onEventChange={setEventFilter} query="" busy={busy}
+                  <SlotGroups slots={data.slots} events={data.events} experiences={data.experiences || []} modes={data.participation_modes||[]} eventId={eventFilter} onEventChange={setEventFilter} query="" busy={busy}
                     onEdit={s=>setModal({type:'slot',value:s})}
                     onAdd={s=>setModal({type:'slot',value:s})}
                     onDelete={s=>{if(window.confirm(`确认删除 ${s.date} ${s.time} 的「${s.experience}」场次？有预约记录的场次无法删除。`))act('admin/slots/delete',{id:s.id},'场次已删除')}} />
@@ -658,8 +638,9 @@ export default function Home() {
                           <tr>
                             <th>会员</th>
                             <th>性别</th>
+                            <th>生日</th>
                             <th>手机号</th>
-                            <th>累计预约</th>
+                            <th>累计活动预约</th>
                             <th>加入时间</th>
                           </tr>
                         </thead>
@@ -674,6 +655,7 @@ export default function Home() {
                               <tr key={u.id}>
                                 <td>{u.name || '未填写'}</td>
                                 <td>{u.gender || '未填写'}</td>
+                                <td>{u.birthday || '未填写'}</td>
                                 <td>
                                   {u.phone || '未授权'}
                                 </td>
@@ -740,9 +722,9 @@ export default function Home() {
         open={!!modal}
         onOpenChange={(o) => !o && !busy && setModal(null)}
       >
-        <DialogContent className="dialog-large">
+        <DialogContent className={`dialog-large ${modal?.type === 'event' ? 'event-dialog' : ''}`}>
           <DialogTitle>
-            {modal?.type === 'experiences' ? '活动体验维护' : modal?.type === 'event'
+            {modal?.type === 'experiences' ? '参与方式与体验' : modal?.type === 'event'
               ? modal.value.id
                 ? '编辑活动'
                 : '创建活动'
@@ -760,55 +742,12 @@ export default function Home() {
               : modal?.type === 'event'
                 ? '填写活动信息，创建后可配置场次并发布。'
                 : modal?.type === 'slot'
-                  ? '增加名额后，候补嘉宾将按报名顺序自动递补。'
+                  ? '增加名额后，嘉宾即可预约空余名额。'
                   : 'HONEY GOLD CLUB'}
           </DialogDescription>
           {error && <div className="alert">{error}</div>}
-          {modal?.type === 'experiences' && <><h3>{modal.value.title}</h3><ExperienceManager key={modal.value.id} eventId={modal.value.id} items={(data.experiences||[]).filter((e:any)=>e.event_id===modal.value.id)} refresh={refresh}/></>}
-          {modal?.type === 'event' && (
-            <form
-              className="form-grid"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const f = Object.fromEntries(new FormData(e.currentTarget));
-                act('admin/events', { ...f, id: modal.value.id }, '活动已保存');
-              }}
-            >
-              {[
-                ['title', '活动名称', 'text'],
-                ['subtitle', '英文副标题', 'text'],
-                ['location', '活动地点', 'text'],
-                ['start_date', '开始日期', 'date'],
-                ['end_date', '结束日期', 'date'],
-              ].map(([k, label, type]) => (
-                <label className="field" key={k}>
-                  {label}
-                  <Input
-                    name={k}
-                    type={type}
-                    defaultValue={modal.value[k]}
-                    required
-                    maxLength={k === 'title' ? 100 : 200}
-                  />
-                </label>
-              ))}
-              <label className="field">
-                首页活动简介
-                <textarea name="summary" defaultValue={modal.value.summary || ''} maxLength={300} rows={3} placeholder="仅用于首页活动列表，最多300字" />
-              </label>
-              <EventImages event={modal.value} />
-              <label className="field">客服微信号<Input name="contact_wechat" defaultValue={modal.value.contact_wechat||''} maxLength={100} placeholder="报名成功后展示，可复制" /></label>
-              <ImageUpload name="contact_qr" label="客服微信二维码" initialValue={modal.value.contact_qr||''} />
-              <EventDetailEditor event={modal.value} />
-              <label className="field">活动须知
-                <textarea name="notices" defaultValue={modal.value.notices || ''} rows={6} maxLength={8000} placeholder="填写本活动的参与须知" />
-                <small>独立展示在详情页，留空则不显示。此处文案不会改变系统的预约及取消规则。</small>
-              </label>
-              <Button type="submit" disabled={busy} className="primary">
-                {busy ? '保存中…' : '保存活动'}
-              </Button>
-            </form>
-          )}
+          {modal?.type === 'experiences' && <><h3>{modal.value.title}</h3><ExperienceManager key={modal.value.id} eventId={modal.value.id} modes={(data.participation_modes||[]).filter((e:any)=>e.event_id===modal.value.id)} refresh={refresh}/></>}
+          {modal?.type === 'event' && <EventForm key={modal.value.id||'new'} event={{...modal.value,participation_modes:(data.participation_modes||[]).filter((m:any)=>m.event_id===modal.value.id)}} busy={busy} onCancel={()=>setModal(null)} onSave={f=>act('admin/events',{...f,id:modal.value.id},'活动已保存')}/>}
           {modal?.type === 'slot' && (
             <form
               className="form-grid"
@@ -817,16 +756,16 @@ export default function Home() {
                 const f = Object.fromEntries(new FormData(e.currentTarget));
                 act(
                   f.batch==='yes'?'admin/slots/batch':'admin/slots',
-                  { ...f, id: modal.value.id, capacity: Number(f.capacity), interval:Number(f.interval) },
+                  { ...f, id: modal.value.id, capacity: Number(f.capacity), interval:Number(f.interval), duration:f.duration?Number(f.duration):undefined },
                   '场次已保存',
                 );
               }}
             >
-              <p className="muted">已有预约记录的场次仅支持调整名额，不能修改体验、日期、时间或删除。</p>
+              <p className="muted">已有预约记录的场次仅支持调整名额，不能修改参与方式、日期、时间或删除。</p>
               <>
                   <label className="field">
                     活动
-                    <select name="eventId" disabled={!!modal.value.id} value={modal.value.eventId || modal.value.event_id} onChange={e=>setModal({...modal,value:{...modal.value,eventId:e.target.value,experience:''}})}>
+                    <select name="eventId" disabled={!!modal.value.id} value={modal.value.eventId || modal.value.event_id} onChange={e=>setModal({...modal,value:{...modal.value,eventId:e.target.value,modeId:''}})}>
                       {data.events.map((e: any) => (
                         <option key={e.id} value={e.id}>
                           {e.title}
@@ -835,12 +774,18 @@ export default function Home() {
                     </select>
                   </label>
                   <label className="field">
-                    体验
-                    <select name="experience" required={(data.experiences||[]).some((e:any)=>e.event_id===(modal.value.eventId||modal.value.event_id))} value={modal.value.experience} onChange={e=>setModal({...modal,value:{...modal.value,experience:e.target.value}})}>
-                      {(data.experiences||[]).some((e:any)=>e.event_id===(modal.value.eventId||modal.value.event_id)) ? <option value="" disabled>请选择本活动的体验</option> : <option value="">无需选择体验</option>}
-                      {(data.experiences || []).filter((e:any)=>e.event_id===(modal.value.eventId||modal.value.event_id) && (e.enabled || e.name===modal.value.experience)).map((e:any)=>(<option key={e.id} value={e.name}>{e.name}{e.enabled?'':'（已停用）'}</option>))}
+                    参与方式
+                    <select name="modeId" required value={modal.value.modeId||modal.value.mode_id||''} onChange={e=>setModal({...modal,value:{...modal.value,modeId:e.target.value,experienceId:''}})}>
+                      <option value="" disabled>请选择参与方式</option>
+                      {(data.participation_modes||[]).filter((m:any)=>m.event_id===(modal.value.eventId||modal.value.event_id)&&(m.enabled||m.id===modal.value.mode_id)).map((m:any)=><option key={m.id} value={m.id}>{m.name}{!m.enabled?'（已停用）':''}</option>)}
                     </select>
                   </label>
+                  {(data.participation_modes||[]).find((m:any)=>m.id===(modal.value.modeId||modal.value.mode_id))?.kind==='experiences'&&<label className="field">体验
+                    <select required name="experienceId" value={modal.value.experienceId??modal.value.experience_id??''} onChange={e=>setModal({...modal,value:{...modal.value,experienceId:e.target.value}})}>
+                      <option value="" disabled>请选择体验</option>
+                      {(data.experiences||[]).filter((x:any)=>x.mode_id===(modal.value.modeId||modal.value.mode_id)).map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                  </label>}
                   <label className="field">
                     日期
                     <Input
@@ -873,21 +818,28 @@ export default function Home() {
             <div>
               {[
                 ['预约人', modal.value.name],
+                ['生日', modal.value.birthday||'未填写'],
+                ['性别', modal.value.gender||'未填写'],
                 ['手机号', modal.value.phone],
                 ['活动', modal.value.title],
                 ['活动地点', modal.value.location],
                 ['预约码', modal.value.code ? `HG:${modal.value.code}` : '—'],
-                ['体验', modal.value.experience || '无需选择体验'],
-                ['时间', modal.value.date + ' ' + modal.value.time],
-                ['状态', stateLabel(modal.value.status)],
+
                 ['拍摄授权', modal.value.photo_consent ? '已同意' : '未同意'],
-                ['核销时间', modal.value.checked_at ? new Date(modal.value.checked_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '未核销'],
+
               ].map(([a, b]) => (
                 <div className="info-line" key={a}>
                   <span>{a}</span>
                   <b>{b}</b>
                 </div>
               ))}
+              <div className="reservation-detail-experiences"><h3>体验与场次</h3>
+                {(modal.value.items||modal.value.reservations||[modal.value]).flatMap((item:any)=>bookingExperiences(item).map((experience:any)=><section className="reservation-detail-item" key={item.id+':'+experience.id}>
+                  <div className="reservation-detail-heading"><strong>{experience.name}</strong><Badge value={item.status}/></div>
+                  <p>{item.date}　{item.time}</p>
+                  {item.checked_at&&<small>核销时间：{new Date(item.checked_at).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})}</small>}
+                </section>))}
+              </div>
             </div>
           )}
           {modal?.type === 'confirm' && (

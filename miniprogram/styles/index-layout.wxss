@@ -1,0 +1,16 @@
+.home-carousel{height:580rpx}.home-carousel image{width:100%;height:100%}.launch-screen{position:fixed;inset:0;z-index:100;background:#f0e7d7}.launch-screen>image{width:100%;height:100%}.launch-skip{position:absolute;right:32rpx;top:100px;z-index:2;min-height:72rpx;margin:0;background:rgba(0,0,0,.45);color:white;font-size:24rpx;border-radius:40rpx;line-height:2.5;padding:0 24rpx}
+
+.launch-screen .launch-skip{width:176rpx;min-width:0;max-width:176rpx;height:64rpx;min-height:64rpx;padding:0 16rpx;display:flex;align-items:center;justify-content:center;box-sizing:border-box;text-align:center;white-space:nowrap;line-height:1;font-size:24rpx;border-radius:32rpx}
+
+.participation-picker{display:flex;justify-content:space-between;padding:22rpx 24rpx;border:1rpx solid #a6a6a6;border-radius:12rpx;font-size:28rpx;margin-bottom:24rpx}.experience-selection{padding:24rpx 0;border-bottom:1rpx solid #eee}.experience-toggle{width:100%;text-align:left;padding:20rpx 24rpx;background:#fff;border:1rpx solid #ddd;border-radius:12rpx;font-size:28rpx}.experience-toggle.selected{background:#f2f5ef;border-color:#315c3f;color:#315c3f}
+
+/* Align experience choices with the sheet content instead of native button centering. */
+.slots-sheet .experience-toggle{display:block;width:350rpx;max-width:100%;margin-left:0;margin-right:auto;text-align:left}
+
+.experience-options{display:flex;flex-wrap:wrap;gap:16rpx;margin-top:24rpx}.experience-options .experience-toggle{margin:0;width:auto;max-width:100%}
+
+/* Compact experience cards: name above the optional multiline description. */
+.slots-sheet .experience-options .experience-toggle{display:flex;flex-direction:column;align-items:center;justify-content:center;width:240rpx;max-width:100%;min-height:100rpx;height:auto;margin:0;padding:14rpx 10rpx;border:1rpx solid #b7b7b7;border-radius:10rpx;background:#fff;color:#999;text-align:center;font-weight:400;line-height:1.4;white-space:normal}
+.experience-option-title{font-size:26rpx;line-height:1.4;overflow-wrap:break-word;width:100%}
+.experience-option-description{margin-top:6rpx;font-size:16rpx;line-height:1.5;white-space:pre-wrap;overflow-wrap:break-word;width:100%}
+.slots-sheet .experience-options .experience-toggle.selected{border-color:#315c3f;background:#f4f6f1;color:#315c3f}
