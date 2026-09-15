@@ -976,3 +976,9 @@
 .copy-code .ticket-code-value{display:block;color:#111;font-size:13px;overflow-wrap:anywhere;font-weight:400;margin:6px 0}.copy-code>span{display:block}
 
 .slots-dialog .slots-scroll{scrollbar-width:none;-ms-overflow-style:none}.slots-dialog .slots-scroll::-webkit-scrollbar{display:none;width:0;height:0}
+
+.ticket-page .booking-bottom-action{margin:24px -22px -35px;z-index:4}
+.booking-bottom-action .reserve-button:disabled{background:#fafafa !important;color:#d9d9d9 !important;opacity:1}
+
+.slots-dialog .experience-title-grid > button,.slots-dialog .experience-title-grid > button small{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","SimHei",sans-serif;font-size:18px;font-weight:500;line-height:26px;letter-spacing:.25px}
+.slots-dialog .schedule-choice-grid > button.selected{background:#1A4D3F;border-color:#1A4D3F;color:#fff}

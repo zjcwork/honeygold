@@ -5,7 +5,7 @@
   "appid": "wx692d68c907dcc82f",
   "projectname": "honeygold-booking",
   "setting": {
-    "urlCheck": false,
+    "urlCheck": true,
     "es6": true,
     "postcss": true,
     "minified": true,

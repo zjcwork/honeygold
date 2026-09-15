@@ -8,7 +8,7 @@ import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/u
 import '../mini.css';
 import './register.css';
 export default function Register() {
-  const [booking,setBooking]=useState<any>(null),[successOpen,setSuccessOpen]=useState(false),[subscriptionMessage,setSubscriptionMessage]=useState('');
+  const [booking,setBooking]=useState<any>(null),[successOpen,setSuccessOpen]=useState(false),[shareMessage,setShareMessage]=useState('');
   const [event, setEvent] = useState<any>(null),
     [selected, setSelected] = useState<any>(null),
     [isDemo, setIsDemo] = useState(true),
@@ -60,6 +60,22 @@ export default function Register() {
       setBusy(false);
     }
   }
+  async function shareEvent() {
+    if (!event) return;
+    const url = new URL('/mini', location.origin);
+    url.searchParams.set('event', event.id);
+    setShareMessage('');
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: '邀请你一起探索 · ' + event.title, url: url.href });
+      } else {
+        await navigator.clipboard.writeText(url.href);
+        setShareMessage('活动链接已复制，可以粘贴分享给好友。');
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') setShareMessage('分享失败，请稍后重试。');
+    }
+  }
   function viewBooking(){if(booking)window.location.replace('/mini?booking='+encodeURIComponent(booking.id));}
   function back() {
     if(booking){viewBooking();return;}
@@ -71,7 +87,7 @@ export default function Register() {
   }
   return (
     <div className="mini-stage">
-      <Dialog open={successOpen} onOpenChange={setSuccessOpen}><DialogContent showCloseButton={false} className="booking-success-web"><button className="booking-success-web-close" onClick={()=>setSuccessOpen(false)}>取消</button><div className="booking-success-web-check">✓</div><DialogTitle>{booking?.status==='waitlisted'?'候补提交成功':'报名成功'}</DialogTitle><DialogDescription>{booking?.status==='waitlisted'?'当前名额已满，请等待递补':'报名已完成，可查看报名信息及入场凭证。'}</DialogDescription>{subscriptionMessage&&<p role="status">{subscriptionMessage}</p>}<div className="booking-success-web-actions"><button onClick={()=>setSubscriptionMessage('请在微信小程序中订阅活动通知。')}>订阅活动通知</button><button onClick={viewBooking}>查看报名信息</button></div></DialogContent></Dialog>
+      <Dialog open={successOpen} onOpenChange={setSuccessOpen}><DialogContent showCloseButton={false} className="booking-success-web"><button className="booking-success-web-close" onClick={()=>setSuccessOpen(false)}>取消</button><div className="booking-success-web-check">✓</div><DialogTitle>{booking?.status==='waitlisted'?'候补提交成功':'报名成功'}</DialogTitle><DialogDescription>{booking?.status==='waitlisted'?'当前名额已满，请等待递补':'报名已完成，可查看报名信息及入场凭证。'}</DialogDescription>{shareMessage&&<p role="status">{shareMessage}</p>}<div className="booking-success-web-actions"><button onClick={shareEvent}>邀请好友探索</button><button onClick={viewBooking}>查看报名信息</button></div></DialogContent></Dialog>
       <main className="phone registration-phone">
         <div className="wechat-top unified-navigation">
           <button

@@ -1,9 +1,10 @@
+const {subscribeActivity}=require('../../utils/subscription');
 const {layoutTicket,drawTicket}=require('../../utils/ticket-poster');
 const {groupBookings,experienceRows,activityStatus}=require('../../utils/booking-groups');
 const {request,login}=require('../../utils/api');
 const labels={confirmed:'预约成功',checked:'已核销',cancelled:'已取消',published:'预约中',draft:'草稿',ended:'已结束'};
 const decorate=b=>({...b,descriptionLines:String(b.description||'').split(/\r?\n/).map(text=>({text,heading:/^[①-⑳]/.test(text.trim())})),detailImageList:(b.detail_images||'').split('\n').filter(Boolean),label:labels[b.status],maskedPhone:(b.phone||'').replace(/(\d{3})\d{4}(\d{4})/,'$1****$2')});
-Page({data:{splashSkipTop:100,posterReady:false,slides:[],splash:null,splashRemaining:0,view:'home',tab:'events',filter:'all',events:[],visibleEvents:[],bookings:[],visibleBookings:[],event:null,eventBooked:false,bookingStatusLoading:false,booking:null,sheet:'',participationModes:[],participationConfig:[],selectedModeKind:'',participationIndex:-1,selectionCards:[],experienceChoices:[],selectedExperienceIds:[],selectedSlotIds:[],selectionReady:false,types:[],dates:[],times:[],selectedType:'',selectedDate:'',slotId:'',selectedTime:'',isFull:false,name:'',phone:'',gender:'女',genders:['女','男','不便透露'],terms:false,photo:false,busy:false,demo:false,changing:false,qr:null},
+Page({data:{splashSkipTop:100,posterReady:false,slides:[],splash:null,splashRemaining:0,view:'home',tab:'events',filter:'all',events:[],visibleEvents:[],bookings:[],visibleBookings:[],event:null,eventBooked:false,bookingStatusLoading:false,booking:null,sheet:'',participationModes:[],participationConfig:[],selectedModeKind:'',participationIndex:-1,selectionCards:[],experienceChoices:[],selectedExperienceIds:[],selectedSlotIds:[],selectionReady:false,types:[],dates:[],times:[],selectedType:'',selectedDate:'',slotId:'',selectedTime:'',isFull:false,name:'',phone:'',gender:'女',genders:['女','男','不便透露'],terms:false,photo:false,busy:false,demo:false,changing:false,qr:null,qrImage:'',ticketQROpen:false},
 async onLoad(options){this.updateSplashPosition();try{const config=await request('config');getApp().globalData.config=config;this.setData({demo:config.demo});await this.refresh();this.homeLoaded=true;await this.loadContent(!options.event&&!options.booking&&!options.mine);if(options.mine)await this.loadMine();if(options.event)await this.openEventId(options.event);if(options.booking){await login();const bookings=await request('bookings');const booking=bookings.find(b=>b.id===options.booking);if(booking)await this.showBooking(booking)}}catch(e){this.error(e)}},
 updateSplashPosition(){
  let top=100;
@@ -68,13 +69,28 @@ noop(){},
 async confirmSlot(){if(this.data.busy)return;if(!this.data.selectionReady)return this.error(new Error('请选择日期，并为所选体验选择时间'));if(!this.data.changing){this.setData({busy:true});wx.navigateTo({url:'/pages/register/register?event='+encodeURIComponent(this.data.event.id)+'&slots='+encodeURIComponent(JSON.stringify(this.data.selectedSlotIds))+'&experiences='+encodeURIComponent(JSON.stringify(this.data.selectedExperienceIds))+'&selections='+encodeURIComponent(JSON.stringify(this.data.selectedSelections)),success:()=>this.setData({sheet:''}),complete:()=>this.setData({busy:false}),fail:()=>this.error(new Error('无法打开报名页面，请重试'))});return}this.setData({busy:true});try{const b=await request('bookings/'+this.data.booking.id+'/reschedule',{selections:this.data.selectedSelections});this.setData({sheet:'',changing:false});await this.showBooking(b)}catch(e){this.error(e)}finally{this.setData({busy:false})}},
 async selectBooking(e){const b=this.data.bookings.find(b=>b.id===e.currentTarget.dataset.id);await this.showBooking(b)},
 async showBooking(b){if(!b)return;let siblings=[decorate(b)];try{const bookings=(await request('bookings')).map(decorate);this.setData({bookings});siblings=groupBookings(bookings).find(g=>g.items.some(x=>x.id===b.id))?.items||siblings}catch(e){this.error(e)}const current=siblings.find(x=>x.id===b.id)||decorate(b),active=siblings.filter(x=>['confirmed'].includes(x.status));this.setData({booking:current,bookingSiblings:siblings,bookingExperienceRows:experienceRows(siblings),view:'ticket',sheet:'',qr:null,ticketQROpen:false,hasAdmission:siblings.some(x=>['confirmed','checked'].includes(x.status)),canManageActivity:active.length>0,activityBookingTitle:siblings.every(x=>x.status==='cancelled')?'预约已取消':siblings.every(x=>x.status==='checked')?'活动已核销':'报名成功！'})},
-async openTicketQR(e){const id=e?.currentTarget?.dataset?.id;const b=id?this.data.bookingSiblings.find(x=>x.id===id):this.data.bookingSiblings.find(x=>['confirmed','checked'].includes(x.status));if(!b)return;this.setData({ticketQROpen:true,qrBooking:b,qr:null});try{const t=await request('bookings/'+b.id+'/ticket');if(!this.data.ticketQROpen||this.data.qrBooking.id!==b.id)return;this.setData({qr:t.qr},()=>this.drawQR(t.qr))}catch(e){this.setData({ticketQROpen:false});this.error(e)}},
-closeTicketQR(){this.setData({ticketQROpen:false,qr:null})},
+async openTicketQR(e){const id=e?.currentTarget?.dataset?.id;const b=id?this.data.bookingSiblings.find(x=>x.id===id):this.data.bookingSiblings.find(x=>['confirmed','checked'].includes(x.status));if(!b)return;const revision=this.ticketQRRevision=(this.ticketQRRevision||0)+1;this.setData({ticketQROpen:true,qrBooking:b,qr:null,qrImage:''});try{const t=await request('bookings/'+b.id+'/ticket');if(!this.data.ticketQROpen||this.ticketQRRevision!==revision)return;this.setData({qr:t.qr},()=>this.drawQR(t.qr,revision))}catch(e){if(this.ticketQRRevision!==revision)return;this.closeTicketQR();this.error(e)}},
+closeTicketQR(){this.ticketQRRevision=(this.ticketQRRevision||0)+1;this.setData({ticketQROpen:false,qr:null,qrImage:''})},
 changeActivitySlot(){return this.reschedule()},
-drawQR(qr){const ctx=wx.createCanvasContext('ticketQR',this);const size=220;ctx.setFillStyle('#ffffff');ctx.fillRect(0,0,size,size);const cell=size/(qr.size+8);ctx.setFillStyle('#1A4D3F');qr.data.forEach((v,i)=>{if(v)ctx.fillRect((i%qr.size+4)*cell,(Math.floor(i/qr.size)+4)*cell,cell+.3,cell+.3)});ctx.draw()},
+// Render the legacy native canvas off-screen; only a normal image enters the scroll-view.
+drawQR(qr,revision){
+ const current=()=>this.data.ticketQROpen&&this.ticketQRRevision===revision;
+ if(!current())return;
+ const ctx=wx.createCanvasContext('ticketQR',this),size=220;
+ ctx.setFillStyle('#ffffff');ctx.fillRect(0,0,size,size);
+ const cell=size/(qr.size+8);ctx.setFillStyle('#1A4D3F');
+ qr.data.forEach((v,i)=>{if(v)ctx.fillRect((i%qr.size+4)*cell,(Math.floor(i/qr.size)+4)*cell,cell+.3,cell+.3)});
+ ctx.draw(false,()=>{
+  if(!current())return;
+  wx.canvasToTempFilePath({canvasId:'ticketQR',width:size,height:size,destWidth:size*3,destHeight:size*3,
+   success:r=>{if(current())this.setData({qrImage:r.tempFilePath})},
+   fail:()=>{if(current()){this.closeTicketQR();this.error(new Error('生成入场码失败，请重试'))}}
+  },this);
+ });
+},
 async cancel(){const r=await new Promise(resolve=>wx.showModal({title:'取消本次活动预约？',content:'本次活动预约下的所有体验将一并取消，各场次名额将释放，可供其他嘉宾预约。',cancelText:'确认取消',confirmText:'再想想',success:resolve}));if(!r.cancel)return;try{const target=this.data.bookingSiblings.find(x=>['confirmed'].includes(x.status))||this.data.booking;const b=await request('bookings/'+target.id+'/cancel',{});await this.showBooking(b)}catch(e){this.error(e)}},
 async reschedule(e){const id=e?.currentTarget?.dataset?.id;if(id){const selected=this.data.bookingSiblings.find(x=>x.id===id);if(selected)this.setData({booking:selected})}try{const event=await request('events/'+this.data.booking.event_id);this.setData({event,changing:true,sheet:'slots'});this.prepareSlots()}catch(e){this.error(e)}},
-subscribe(){const config=getApp().globalData.config;const id=config?.subscriptionTemplateId;if(!id)return this.error(new Error('订阅通知尚未配置，请在我的活动查看最新状态'));wx.requestSubscribeMessage({tmplIds:[id],success:async r=>{if(r[id]==='accept'){try{await request('bookings/'+this.data.booking.id+'/subscribe',{});wx.showToast({title:'订阅授权成功',icon:'none'})}catch(e){this.error(e)}}else wx.showToast({title:'可在我的活动查看',icon:'none'})},fail:e=>this.error(new Error(e.errMsg))})},
+subscribe(){return subscribeActivity(this,this.data.bookingSiblings||[this.data.booking])},
 copyTicketCode(){if(this.data.qr&&this.data.booking.code)wx.setClipboardData({data:'HG:'+(this.data.qrBooking||this.data.booking).code})},
 previewContact(){const url=this.data.booking?.contact_qr;if(!url)return;wx.previewImage({current:url,urls:[url],showmenu:true,fail:()=>this.error(new Error('二维码预览失败，请重试'))})},
 copyContact(){wx.setClipboardData({data:this.data.booking.contact_wechat})},
@@ -83,5 +99,5 @@ saveTicket(){if(!this.data.qr||this.savingPoster)return;this.savingPoster=true;c
 renderTicketPoster(){const plan=this.ticketPosterPlan;if(!plan){this.savingPoster=false;this.setData({posterReady:false});return}const ctx=wx.createCanvasContext('poster',this);drawTicket(ctx,plan);ctx.draw(false,()=>{const scale=plan.height>4000?1:2;wx.canvasToTempFilePath({canvasId:'poster',width:plan.width,height:plan.height,destWidth:plan.width*scale,destHeight:plan.height*scale,complete:()=>{this.savingPoster=false;this.ticketPosterPlan=null;this.setData({posterReady:false})},success:r=>wx.saveImageToPhotosAlbum({filePath:r.tempFilePath,success:()=>wx.showToast({title:'入场凭证已保存'}),fail:()=>wx.showModal({title:'保存相册失败',content:'请在设置中允许保存到相册后重试。',confirmText:'打开设置',success:r=>{if(r.confirm)wx.openSetting({})}})}),fail:()=>this.error(new Error('生成凭证失败，请重试'))},this)})},
 showTerms(e){wx.navigateTo({url:'/pages/terms/terms?type='+encodeURIComponent(e.currentTarget.dataset.type||'terms')})},
 backTerms(){this.setData({sheet:this.data.previousSheet||''})},
-onShareAppMessage(){return {title:this.data.event?.title||'蜜金 · 海岛漫游记',path:'/pages/index/index'+(this.data.event?'?event='+this.data.event.id:'')}}
+onShareAppMessage(){const source=this.data.view==='ticket'?this.data.booking:this.data.event;const eventId=this.data.view==='ticket'?source?.event_id:source?.id;return {title:source?.title||'蜜金 · 海岛漫游记',path:'/pages/index/index'+(eventId?'?event='+encodeURIComponent(eventId):''),...(source?.cover_image?{imageUrl:source.cover_image}:{})}}
 });

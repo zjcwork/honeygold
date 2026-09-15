@@ -1,1 +1,1 @@
-App({globalData:{config:null}})
+App({globalData:{config:null}});

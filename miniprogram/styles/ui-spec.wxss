@@ -1,6 +1,6 @@
 /* 标注.pdf (375px design): px × 2 = rpx. Font assets are not supplied;
    use Source Han Sans CN when available, then platform CJK sans-serif. */
-page{--hg-green:#1A4D3F;--hg-gold:#EEE7D9;--hg-line:#E7E7E7;--hg-muted:#9E9E9E;--hg-ink:#1A1A1A;background:#fff;color:#1A1A1A;font-family:"Source Han Sans CN","SourceHanSansCN","Noto Sans CJK SC","PingFang SC","Microsoft YaHei",sans-serif;font-size:24rpx;font-weight:400;letter-spacing:.5rpx}
+page{--hg-green:#1A4D3F;--hg-gold:#EEE7D9;--hg-line:#E7E7E7;--hg-muted:#9E9E9E;--hg-ink:#1A1A1A;background:#fff;color:#1A1A1A;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","SimHei",sans-serif;font-size:24rpx;font-weight:400;letter-spacing:.5rpx}
 button,input,textarea{font-family:inherit;font-weight:400;letter-spacing:inherit}
 .muted,.subtitle,.meta,.description{color:#9E9E9E}
 .tabs{padding:24rpx 50rpx 20rpx;gap:20rpx;flex-wrap:nowrap}
@@ -20,7 +20,7 @@ button,input,textarea{font-family:inherit;font-weight:400;letter-spacing:inherit
 .sheet{color:#1A1A1A}.sheet .handle{background:#9E9E9E}.sheet .sheet-header{font-size:36rpx;font-weight:500;letter-spacing:.6rpx}.sheet .sheet-header .close{font-size:36rpx;font-weight:400;letter-spacing:.6rpx;color:#9E9E9E}
 .slots-sheet .section-title{font-size:30rpx;font-weight:400;line-height:44rpx;letter-spacing:.5rpx;color:#1A1A1A;margin:36rpx 0 20rpx}
 .slots-sheet .slot-hint,.sheet .muted{font-size:22rpx;font-weight:400;line-height:36rpx;letter-spacing:.4rpx;color:#9E9E9E}
-.slots-sheet .choices{gap:20rpx 12rpx}.slots-sheet .choices button{font-size:24rpx;font-weight:500;letter-spacing:.5rpx;line-height:36rpx;min-height:72rpx;padding:16rpx 6rpx;border-color:#9E9E9E;color:#9E9E9E;border-radius:10rpx}.slots-sheet .choices .selected{color:#1A1A1A;border-color:#1A1A1A;background:#fff}
+.slots-sheet .choices{gap:20rpx 12rpx}.slots-sheet .choices button{font-size:24rpx;font-weight:500;letter-spacing:.5rpx;line-height:36rpx;min-height:72rpx;padding:16rpx 6rpx;border-color:#9E9E9E;color:#9E9E9E;border-radius:10rpx}.slots-sheet .choices .selected{color:#fff;border-color:#1A4D3F;background:#1A4D3F}
 .participation-picker{font-size:30rpx;font-weight:400;letter-spacing:.5rpx;line-height:44rpx;padding:14rpx 20rpx;border-color:#9E9E9E;color:#1A1A1A;margin-bottom:0}
 .experience-selection{padding:0 0 28rpx;border-color:#E7E7E7}.experience-options{gap:12rpx;margin-top:24rpx;padding-bottom:12rpx}
 .slots-sheet .experience-options .experience-toggle{width:calc((100% - 24rpx) / 3);min-width:0;min-height:96rpx;padding:12rpx 8rpx;border-radius:10rpx;border-color:#9E9E9E;color:#9E9E9E;background:#fff;letter-spacing:.5rpx;font-weight:400}
@@ -121,3 +121,13 @@ button,input,textarea{font-family:inherit;font-weight:400;letter-spacing:inherit
 .image-placeholder{background:#E7E7E7;flex-shrink:0}.detail-image-placeholder{width:100%;height:570rpx;background:#E7E7E7}
 
 .birthday-clear{display:block;margin-top:8rpx;color:#9E9E9E;font-size:24rpx;line-height:36rpx}
+
+/* Leave room for the fixed sharing footer on the booking result. */
+.registration-success{padding-bottom:calc(180rpx + env(safe-area-inset-bottom))}
+.booking-bottom-action .gold-button[disabled]{background:#fafafa;color:#d9d9d9;opacity:1}
+
+/* Experience headings: 18px Medium with 0.25px tracking on a 375px canvas. */
+.slots-sheet .experience-schedule .experience-options .experience-toggle{width:100%;min-height:0;align-items:flex-start;padding:0;border:0;border-radius:0;background:transparent;color:#1A1A1A;text-align:left}
+.slots-sheet .experience-schedule .experience-option-title{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","SimHei",sans-serif;font-size:36rpx;font-weight:500;line-height:52rpx;letter-spacing:.5rpx;text-align:left}
+.slots-sheet .experience-schedule .experience-option-description{text-align:left;color:#9E9E9E}
+.slots-sheet .experience-schedule .experience-toggle[disabled]{opacity:1}

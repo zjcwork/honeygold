@@ -70,11 +70,11 @@ export function BookingTable({ rows, onDetail }: any) {
   rows=groupBookings(rows).map(r=>({...r,experienceColumns:r.items.flatMap((item:any)=>bookingExperiences(item).map(experience=>({...experience,date:item.date,time:item.time})))}));
   return (
     <div className="table-wrap reservation-table">
-      <table style={{minWidth:1100}}>
-        <colgroup><col style={{width:140}}/><col style={{width:60}}/><col style={{width:180}}/><col style={{width:180}}/><col style={{width:175}}/><col style={{width:190}}/><col style={{width:100}}/><col style={{width:75}}/></colgroup>
+      <table style={{minWidth:1210}}>
+        <colgroup><col style={{width:140}}/><col style={{width:60}}/><col style={{width:110}}/><col style={{width:180}}/><col style={{width:180}}/><col style={{width:175}}/><col style={{width:190}}/><col style={{width:100}}/><col style={{width:75}}/></colgroup>
         <thead>
           <tr>
-            {['预约人', '性别', '活动', '体验', '预约时间', '预约码', '预约状态', '操作'].map(
+            {['预约人', '性别', '生日', '活动', '体验', '预约时间', '预约码', '预约状态', '操作'].map(
               (x) => (
                 <th key={x}>{x}</th>
               ),
@@ -87,6 +87,7 @@ export function BookingTable({ rows, onDetail }: any) {
               {index===0&&<>
                 <td rowSpan={r.experienceColumns.length}>{r.name}<small>{r.phone||'未填写'}</small></td>
                 <td rowSpan={r.experienceColumns.length}>{r.gender||'未填写'}</td>
+                <td rowSpan={r.experienceColumns.length}>{r.birthday||'未填写'}</td>
                 <td rowSpan={r.experienceColumns.length}>{r.title}</td>
               </>}
               <td className="reservation-experience-name">{experience.name}</td>
@@ -226,6 +227,11 @@ export default function Home() {
       (eventFilter === 'all' || s.event_id === eventFilter) &&
       (s.experience + s.date + s.time).includes(query),
   );
+  const authorizedMembers = data.users.filter((u: any) => typeof u.phone === 'string' && u.phone.trim().length > 0);
+  const visibleMembers = authorizedMembers.filter((u: any) => ((u.name || '') + u.phone).includes(query));
+  const ongoingEventIds = new Set(data.events.filter((e: any) => e.status === 'published').map((e: any) => e.id));
+  const ongoingBookings = data.bookings.filter((b: any) => ongoingEventIds.has(b.event_id) && b.status !== 'cancelled');
+  const ongoingCheckins = ongoingBookings.filter((b: any) => b.status === 'checked');
   const metrics = [
     [
       '活动总数',
@@ -235,14 +241,14 @@ export default function Home() {
     ],
     [
       '预约人数',
-      new Set(data.bookings.filter((b:any)=>b.status!=='cancelled').map((b:any)=>b.user_id)).size,
-      `${groupBookings(data.bookings.filter((b:any)=>b.status!=='cancelled')).length} 次活动预约 · 人数按会员去重`,
+      new Set(ongoingBookings.map((b: any) => b.user_id)).size,
+      `进行中活动 · ${groupBookings(ongoingBookings).length} 次预约 · 人数按会员去重`,
       Ticket,
     ],
     [
       '已核销人数',
-      new Set(data.bookings.filter((b:any)=>b.status==='checked').map((b:any)=>b.user_id)).size,
-      `${groupBookings(data.bookings.filter((b:any)=>b.status==='checked')).length} 次活动已有核销 · 人数按会员去重`,
+      new Set(ongoingCheckins.map((b: any) => b.user_id)).size,
+      `进行中活动 · ${groupBookings(ongoingCheckins).length} 次预约已有核销 · 人数按会员去重`,
       ScanLine,
     ],
   ];
@@ -466,7 +472,7 @@ export default function Home() {
                                       编辑
                                     </Button>
                                     <Button variant="ghost" onClick={()=>setModal({type:'experiences',value:e})}>参与方式与体验</Button>
-                                    <Button variant="ghost" disabled={busy} onClick={()=>setModal({type:'confirm',title:'删除活动',description:`确认删除「${e.title}」？该活动及其体验、场次将一并删除，无法恢复。有预约记录的活动不能删除。`,path:'admin/events/delete',body:{id:e.id}})}>删除</Button>
+                                    <Button variant="ghost" disabled={busy} onClick={()=>setModal({type:'confirm',title:'删除活动',description:`确认删除「${e.title}」？该活动及其体验、场次将一并删除，无法恢复。如有预约记录，请勾选下方强制删除选项；所有关联预约（含已核销、已取消记录）及入场凭证、通知记录将一并清除。会员资料保留。`,path:'admin/events/delete',body:{id:e.id,force:false}})}>删除</Button>
                                     <Button
                                       variant="ghost"
                                       onClick={() => {
@@ -629,7 +635,7 @@ export default function Home() {
                       value={query}
                       onChange={(e) => setQuery(e.target.value)}
                     />
-                    <span>共 {data.users.length} 位会员</span>
+                    <span>共 {authorizedMembers.length} 位会员</span>
                   </div>
                   <section className="panel">
                     <div className="table-wrap">
@@ -645,13 +651,7 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody>
-                          {data.users
-                            .filter((u: any) =>
-                              ((u.name || '') + (u.phone || '')).includes(
-                                query,
-                              ),
-                            )
-                            .map((u: any) => (
+                          {visibleMembers.map((u: any) => (
                               <tr key={u.id}>
                                 <td>{u.name || '未填写'}</td>
                                 <td>{u.gender || '未填写'}</td>
@@ -665,9 +665,9 @@ export default function Home() {
                             ))}
                         </tbody>
                       </table>
-                      {!data.users.length && (
+                      {!visibleMembers.length && (
                         <div className="empty">
-                          暂无会员，用户登录小程序后会自动建立会员记录。
+                          {authorizedMembers.length ? '未找到匹配的会员。' : '暂无已授权手机号的会员。'}
                         </div>
                       )}
                     </div>
@@ -843,6 +843,13 @@ export default function Home() {
             </div>
           )}
           {modal?.type === 'confirm' && (
+            <div>
+              {modal.path === 'admin/events/delete' && (
+                <label style={{display:'flex',alignItems:'flex-start',gap:8,marginBottom:20}}>
+                  <input type="checkbox" checked={modal.body.force === true} disabled={busy} onChange={e => setModal({...modal,body:{...modal.body,force:e.target.checked}})} />
+                  同时强制删除该活动的全部关联预约（不可恢复）
+                </label>
+              )}
             <div className="actions">
               <Button
                 variant="outline"
@@ -855,8 +862,9 @@ export default function Home() {
                 onClick={() => act(modal.path, modal.body, '操作成功')}
                 disabled={busy}
               >
-                确认{modal.title}
+                {modal.path === 'admin/events/delete' && modal.body.force ? '确认强制删除活动及预约' : '确认' + modal.title}
               </Button>
+            </div>
             </div>
           )}
         </DialogContent>

@@ -99,12 +99,14 @@ export default function Mini() {
     }
   }
   async function shareEvent() {
-    if (!event) return;
+    const source = booking || event;
+    const eventId = booking ? booking.event_id : event?.id;
+    if (!source || !eventId) return;
     const url = new URL('/mini', location.origin);
-    url.searchParams.set('event', event.id);
+    url.searchParams.set('event', eventId);
     try {
       if (navigator.share) {
-        await navigator.share({ title: event.title, url: url.href });
+        await navigator.share({ title: source.title, url: url.href });
       } else {
         await navigator.clipboard.writeText(url.href);
         window.alert('活动链接已复制，可以粘贴分享给好友。');
@@ -566,6 +568,14 @@ export default function Mini() {
                 <br />
                 免费预约 · 从容赴约
               </p>
+              <div className="bottom-action booking-bottom-action">
+                <Button className="share-button" aria-label="邀请好友探索" onClick={shareEvent}>
+                  <Share size={29} strokeWidth={1} />
+                </Button>
+                <Button className="reserve-button" disabled>
+                  {booking.status === 'cancelled' ? '预约已取消' : '已预约'}
+                </Button>
+              </div>
             </div>
           )}
         </div>
@@ -632,7 +642,7 @@ export default function Mini() {
             <>
               <div className="slots-scroll">
                 {(event.slots.some((s:any)=>s.experience) ) && <><h3>选择场次</h3>
-                <div className="choice-grid">
+                <div className="choice-grid experience-title-grid">
                   {Array.from(
                     new Set(event.slots.map((s: any) => s.experience)),
                   ).map((t: any) => (
@@ -656,7 +666,7 @@ export default function Mini() {
                   ))}
                 </div>
                 </>}<h3>选择日期</h3>
-                <div className="choice-grid">
+                <div className="choice-grid schedule-choice-grid">
                   {Array.from(
                     new Set(
                       event.slots
@@ -677,7 +687,7 @@ export default function Mini() {
                   ))}
                 </div>
                 <h3>选择时间</h3>
-                <div className="choice-grid">
+                <div className="choice-grid schedule-choice-grid">
                   {slots.map((s: any) => (
                     <button
                       key={s.id}
@@ -707,7 +717,7 @@ export default function Mini() {
                       ? '名额已满'
                       : changing
                         ? '确认改签'
-                        : '确认预约'}
+                        : '立即预约'}
                 </Button>
               </div>
             </>

@@ -1,3 +1,4 @@
+import { normalizeImageUrls } from './image-urls';
 import { defaultLegal, legalTitles } from './legal';
 import {generateSlotTimes,validateSlotTime} from './slot-times';
 import { flushNotices, subscriptionReady } from './notifications';
@@ -159,9 +160,10 @@ export async function handle(req: Request) {
       let binary = ''; for (let i=0;i<bytes.length;i+=8192) binary += String.fromCharCode(...bytes.subarray(i,i+8192));
       const id = uuid();
       await q('INSERT INTO content_settings(id,payload) VALUES(?,?)', 'image:'+id, JSON.stringify({type,data:btoa(binary)})).run();
-      return response({url:new URL('/api/images/'+id, req.url).href});
+      return response({url:'/api/images/'+id});
     }
     const validImage = (value:string) => {
+      if (/^\/api\/images\/[a-f0-9-]{36}$/i.test(value)) return true;
       try { const u = new URL(value); return !u.username && !u.password && (u.protocol === 'https:' || (u.origin === new URL(req.url).origin && /^\/api\/images\/[a-f0-9-]{36}$/.test(u.pathname) && !u.search && !u.hash)); } catch { return false; }
     };
     const b: any = method === 'GET' ? {} : await req.json().catch(() => ({}));
@@ -327,9 +329,12 @@ export async function handle(req: Request) {
     }
     if (/^bookings\/[^/]+\/subscribe$/.test(path) && method === 'POST') {
       const user = await session(req);
+      assert(user.role === 'user', '请使用用户身份登录', 403);
       assert(subscriptionReady(), '订阅服务尚未配置', 503);
+      assert(!b.templateId || b.templateId === conf.WECHAT_SUBSCRIBE_TEMPLATE_ID, '通知模板已更新，请重新进入报名页面');
       const booking = await one(
-        'SELECT id,status FROM bookings WHERE id=? AND user_id=?',
+        `SELECT b.id,b.status FROM bookings b JOIN slots s ON s.id=b.slot_id WHERE b.user_id=? AND b.status='confirmed' AND COALESCE(b.booking_group_id,b.id)=(SELECT COALESCE(booking_group_id,id) FROM bookings WHERE id=? AND user_id=? AND status='confirmed') ORDER BY s.date,s.time,b.id LIMIT 1`,
+        user.user_id,
         path.split('/')[1],
         user.user_id,
       );
@@ -338,12 +343,13 @@ export async function handle(req: Request) {
         '此预约不可订阅',
       );
       await q(
-        "INSERT INTO notifications(booking_id,status,updated_at) VALUES(?,'pending',?) ON CONFLICT(booking_id) DO UPDATE SET status='pending',last_error=NULL,updated_at=excluded.updated_at WHERE notifications.status NOT IN ('pending','sending','unknown')",
+        "INSERT INTO notifications(booking_id,status,updated_at) VALUES(?,'pending',?) ON CONFLICT(booking_id) DO NOTHING",
         booking.id,
         now(),
       ).run();
-      await flushNotices();
-      return response({ ok: true });
+      await flushNotices(booking.id);
+      const notice = await one('SELECT status FROM notifications WHERE booking_id=?', booking.id);
+      return response({ ok: true, status: notice?.status || 'pending' });
     }
     if (
       /^bookings\/[^/]+\/(cancel|reschedule)$/.test(path) &&
@@ -634,16 +640,22 @@ export async function handle(req: Request) {
       if (path === 'admin/events/delete' && method === 'POST') {
         const id=text(b.id,100);
         assert(await one('SELECT id FROM events WHERE id=?',id),'活动不存在',404);
-        assert(!(await one('SELECT id FROM bookings WHERE event_id=? LIMIT 1',id)),'此活动已有预约记录，不能删除；可下架或结束活动');
+        const force=b.force===true;
+        assert(force || !(await one('SELECT id FROM bookings WHERE event_id=? LIMIT 1',id)),'此活动已有预约记录，请勾选强制删除关联预约后重试');
         const config=await one("SELECT payload FROM content_settings WHERE id='home'");
         if(config){const content=JSON.parse(config.payload);assert(content.splash?.eventId!==id && !(content.slides||[]).some((s:any)=>s.eventId===id),'此活动被开屏或轮播关联，请先解除关联');}
         const result=await db().batch([
+          ...(force ? [
+            q('DELETE FROM notifications WHERE booking_id IN (SELECT id FROM bookings WHERE event_id=?)',id),
+            q('DELETE FROM booking_credentials WHERE group_key IN (SELECT COALESCE(booking_group_id,id) FROM bookings WHERE event_id=?) AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id!=? AND COALESCE(booking_group_id,id)=booking_credentials.group_key)',id,id),
+            q('DELETE FROM bookings WHERE event_id=?',id),
+          ] : []),
           q('DELETE FROM slots WHERE event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
           q('DELETE FROM experiences WHERE event_id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
           q('DELETE FROM participation_modes WHERE event_id=?',id),
           q('DELETE FROM events WHERE id=? AND NOT EXISTS(SELECT 1 FROM bookings WHERE event_id=?)',id,id),
         ]);
-        assert(result[3].meta.changes===1,'此活动已有预约记录，不能删除');
+        assert(result[result.length-1].meta.changes===1,'此活动已有预约记录，请勾选强制删除关联预约后重试');
         return response({ok:true});
       }
       if (path === 'admin/event-status' && method === 'POST') {
@@ -720,7 +732,7 @@ export async function handle(req: Request) {
   }
 }
 function response(body: any, status = 200) {
-  return Response.json(body, {
+  return Response.json(normalizeImageUrls(body), {
     status,
     headers: {
       'Cache-Control': 'no-store',

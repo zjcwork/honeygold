@@ -1,2 +1,2 @@
-// 本地开发接口。
-module.exports={baseUrl:'http://localhost:3000/api'};
+// 服务器接口。
+module.exports={baseUrl:'https://honeygold.wwitechs.com/api'};
